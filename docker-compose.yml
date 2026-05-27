@@ -35,24 +35,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
-  caddy:
-    image: caddy:latest
-    ports:
-      - 80:8000
-      - 443:8080
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./frontend:/srv/frontend
-    environment:
-      - BACKEND_HOST=app
-      - BACKEND_PORT=3000
-    depends_on:
-      - app
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
 
   frontend2:
     image: node:22-alpine
