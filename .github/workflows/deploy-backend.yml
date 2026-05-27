@@ -34,7 +34,7 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p ${{ secrets.SSH_PORT || '22' }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: 📂 同步 src 文件夹到服务器（rsync）
+      - name: 📂 同步 src 文件夹到服务器
         run: |
           rsync -avz --delete \
             -e "ssh -p ${{ secrets.SSH_PORT || '22' }} -o StrictHostKeyChecking=no" \
