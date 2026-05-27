@@ -34,19 +34,15 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p ${{ secrets.SSH_PORT || '22' }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: 📦 安装 rsync（本地 + 远程服务器）
+      - name: � 同步 src 文件夹到服务器（tar + ssh）
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq rsync
           ssh -p ${{ secrets.SSH_PORT || '22' }} -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "command -v rsync || (apt-get update -qq && apt-get install -y -qq rsync)"
-
-      - name: 📂 同步 src 文件夹到服务器
-        run: |
-          rsync -avz --delete \
-            -e "ssh -p ${{ secrets.SSH_PORT || '22' }} -o StrictHostKeyChecking=no" \
-            ./src/ \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:${{ secrets.SERVER_PATH }}/
+            "rm -rf ${{ secrets.SERVER_PATH }}/*"
+          tar czf - -C ./src/ . | \
+            ssh -p ${{ secrets.SSH_PORT || '22' }} -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
+              "tar xzf - -C ${{ secrets.SERVER_PATH }}"
 
       - name: � 重启 Docker 容器
         run: |
