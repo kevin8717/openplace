@@ -29,8 +29,7 @@ jobs:
           known_hosts: ${{ secrets.SSH_KNOWN_HOSTS || 'placeholder' }}
           if_key_exists: replace
 
-      - name: 📝 配置 known_hosts（如未预配置）
-        if: ${{ !secrets.SSH_KNOWN_HOSTS }}
+      - name: 📝 配置 known_hosts
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p ${{ secrets.SSH_PORT || '22' }} -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
