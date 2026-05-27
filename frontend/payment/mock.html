@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Wplace - 模拟支付</title>
+	<style>
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 1rem;
+		}
+		.card {
+			background: #fff;
+			border-radius: 12px;
+			box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+			width: 100%;
+			max-width: 420px;
+			padding: 2rem;
+			text-align: center;
+		}
+		.card h1 {
+			font-size: 1.5rem;
+			color: #333;
+			margin-bottom: 0.25rem;
+		}
+		.card .subtitle {
+			color: #888;
+			font-size: 0.85rem;
+			margin-bottom: 1.5rem;
+		}
+		.product-info {
+			background: #f8f9ff;
+			border-radius: 8px;
+			padding: 1rem;
+			margin-bottom: 1.5rem;
+		}
+		.product-info .amount {
+			font-size: 2rem;
+			font-weight: 700;
+			color: #667eea;
+		}
+		.product-info .label {
+			color: #666;
+			font-size: 0.9rem;
+			margin-top: 0.25rem;
+		}
+		.product-info .price {
+			color: #333;
+			font-size: 1.1rem;
+			font-weight: 600;
+			margin-top: 0.5rem;
+		}
+		.mock-badge {
+			display: inline-block;
+			background: #fff3cd;
+			color: #856404;
+			font-size: 0.75rem;
+			font-weight: 700;
+			padding: 0.2rem 0.6rem;
+			border-radius: 4px;
+			margin-bottom: 1rem;
+			text-transform: uppercase;
+			letter-spacing: 0.5px;
+		}
+		.card-icon {
+			display: flex;
+			justify-content: center;
+			gap: 0.5rem;
+			margin-bottom: 1rem;
+		}
+		.card-icon span {
+			font-size: 2rem;
+		}
+		.btn {
+			display: inline-block;
+			width: 100%;
+			padding: 0.9rem;
+			border: none;
+			border-radius: 8px;
+			font-size: 1rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s;
+			text-decoration: none;
+			color: #fff;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+		}
+		.btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(102,126,234,0.4); }
+		.btn:active { transform: translateY(0); }
+		.btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+		.loading { display: none; }
+		.btn.loading .btn-text { display: none; }
+		.btn.loading .loading { display: inline; }
+		.spinner {
+			display: inline-block;
+			width: 18px; height: 18px;
+			border: 3px solid rgba(255,255,255,0.3);
+			border-top-color: #fff;
+			border-radius: 50%;
+			animation: spin 0.6s linear infinite;
+			vertical-align: middle;
+		}
+		@keyframes spin { to { transform: rotate(360deg); } }
+		.footer {
+			margin-top: 1rem;
+			font-size: 0.8rem;
+			color: #aaa;
+		}
+		.cancel-link {
+			display: inline-block;
+			margin-top: 1rem;
+			color: #999;
+			font-size: 0.85rem;
+			text-decoration: none;
+		}
+		.cancel-link:hover { color: #666; }
+		.error-msg {
+			color: #dc3545;
+			font-size: 0.9rem;
+			margin-top: 0.5rem;
+			display: none;
+		}
+	</style>
+</head>
+<body>
+	<div class="card" id="app">
+		<div class="mock-badge">⚠ 模拟支付</div>
+
+		<div class="card-icon">
+			<span>💳</span> <span>🏦</span> <span>🅿️</span>
+		</div>
+
+		<h1>确认支付</h1>
+		<p class="subtitle">这是一个模拟支付页面，用于测试支付流程</p>
+
+		<div class="product-info">
+			<div class="amount" id="dropletAmount">--</div>
+			<div class="label">Droplets（水滴）</div>
+			<div class="price" id="priceDisplay">$ --</div>
+		</div>
+
+		<form id="paymentForm" method="POST">
+			<input type="hidden" name="session_id" id="sessionIdInput" value="" />
+			<button type="submit" class="btn" id="payBtn">
+				<span class="btn-text">💧 立即支付</span>
+				<span class="loading"><span class="spinner"></span> 处理中...</span>
+			</button>
+		</form>
+
+		<div class="error-msg" id="errorMsg"></div>
+
+		<a class="cancel-link" href="/">← 取消并返回首页</a>
+
+		<div class="footer">模拟支付 • 不会产生真实扣款</div>
+	</div>
+
+	<script>
+		(function() {
+			// Parse URL params
+			const params = new URLSearchParams(window.location.search);
+			const sessionId = params.get('session_id');
+			const lookupKey = params.get('lookup_key');
+			const droplets = params.get('droplets');
+
+			const PRODUCTS = {
+				'droplets_5':   { droplets: 25000,  bonus: 0,     price: '$5' },
+				'droplets_15':  { droplets: 75000,  bonus: 3750,  price: '$15' },
+				'droplets_30':  { droplets: 150000, bonus: 15000, price: '$30' },
+				'droplets_50':  { droplets: 250000, bonus: 37500, price: '$50' },
+				'droplets_75':  { droplets: 375000, bonus: 75000, price: '$75' },
+				'droplets_100': { droplets: 500000, bonus: 125000,price: '$100' },
+			};
+
+			const product = lookupKey ? PRODUCTS[lookupKey] : null;
+			const total = product ? (product.droplets + product.bonus) : (droplets ? Number(droplets) : 0);
+
+			document.getElementById('sessionIdInput').value = sessionId || '';
+			document.getElementById('dropletAmount').textContent = total ? total.toLocaleString() : '--';
+			document.getElementById('priceDisplay').textContent = product ? product.price : (droplets ? '--' : '--');
+
+			// Form submit
+			document.getElementById('paymentForm').addEventListener('submit', async function(e) {
+				e.preventDefault();
+				const btn = document.getElementById('payBtn');
+				const errEl = document.getElementById('errorMsg');
+				btn.classList.add('loading');
+				btn.disabled = true;
+				errEl.style.display = 'none';
+
+				try {
+					const resp = await fetch('/payment/mock/confirm', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						credentials: 'include',
+						body: JSON.stringify({ session_id: sessionId })
+					});
+
+					if (resp.redirected) {
+						window.location.href = resp.url;
+					} else if (resp.ok) {
+						const data = await resp.json();
+						if (data.redirect) {
+							window.location.href = data.redirect;
+						} else {
+							window.location.href = '/payment/success?droplets=' + total;
+						}
+					} else {
+						const data = await resp.json().catch(() => ({}));
+				errEl.textContent = data.error || '支付失败，请重试。';
+						errEl.style.display = 'block';
+						btn.classList.remove('loading');
+						btn.disabled = false;
+					}
+				} catch (err) {
+					errEl.textContent = '网络错误，请重试。';
+					errEl.style.display = 'block';
+					btn.classList.remove('loading');
+					btn.disabled = false;
+				}
+			});
+		})();
+	</script>
+</body>
+</html>

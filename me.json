@@ -1,0 +1,60 @@
+{
+	"allianceId": 0,
+	"allianceName": "",
+	"allianceRole": "member",
+	"charges": { "cooldownMs": 30000, "count": 7715, "max": 7715 },
+	"country": "SG",
+	"discord": "",
+	"discordId": "885043859481059328",
+	"droplets": 31474,
+	"equippedBadges": [
+		null,
+		{
+			"id": 3,
+			"imageUrl": "https://files.wplace.live/img/uploads/badge_big_bucket_f857a4fb.png",
+			"name": "Big Buckets",
+			"rarity": "rare"
+		},
+		null
+	],
+	"equippedFlag": 45,
+	"equippedFrameId": 1,
+	"equippedFrameUrl": "/img/frames/2025_christmas_border.png",
+	"equippedNameCosmetic": null,
+	"extraColorsBitmap": -1,
+	"favoriteLocations": [
+		{
+			"id": 10337237,
+			"name": "",
+			"latitude": 30.883445034958527,
+			"longitude": 113.89825162177735
+		},
+		{
+			"id": 10605083,
+			"name": "",
+			"latitude": 31.251430365362502,
+			"longitude": 113.75938443427732
+		},
+		{
+			"id": 11311976,
+			"name": "",
+			"latitude": 35.00098783384383,
+			"longitude": 109.15163052802734
+		}
+	],
+	"flagsBitmap": "BAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAIAAAAAAA",
+	"freeFlag": false,
+	"hotspotsOptOut": false,
+	"id": 12080885,
+	"isCustomer": false,
+	"level": 460.02932045077864,
+	"maxFavoriteLocations": 100,
+	"name": "seviyz",
+	"picture": "",
+	"pixelsPainted": 373474,
+	"role": "user",
+	"rulesRead": true,
+	"showDiscord": true,
+	"showLastPixel": true,
+	"timeoutUntil": "1970-01-01T00:00:00Z"
+}
