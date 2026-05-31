@@ -115,9 +115,7 @@ app.use((req, res, next) => {
 
 	case "application/json":
 	case "text/plain":
-	case "application/x-www-form-urlencoded":
 		// text/plain is used because the frontend doesn't set a Content-Type...
-		// application/x-www-form-urlencoded: 旧前端或非标准客户端发送表单数据，也尝试解析为 JSON
 		// Wrap JSON middleware with error handling
 		try {
 			return jsonMiddleware(req, res, next);
