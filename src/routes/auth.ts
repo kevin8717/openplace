@@ -8,7 +8,7 @@ import { COOLDOWN_MS, UserService } from "../services/user.js";
 import { AuthenticatedRequest, BanReason, UserRole } from "../types/index.js";
 import { AuthService, AuthToken } from "../services/auth.js";
 import { rateLimiter } from "../services/rate-limiter.js";
-import { discordBot } from "../discord/bot.js";
+import { sendEmail } from "../services/email.js";
 
 const LOGIN_RATE_LIMIT_ATTEMPTS = Number.parseInt(process.env["LOGIN_RATE_LIMIT_ATTEMPTS"] ?? "") || 5;
 const LOGIN_RATE_LIMIT_MS = Number.parseInt(process.env["LOGIN_RATE_LIMIT_MS"] ?? "") || 300_000;
@@ -264,7 +264,7 @@ export default function (app: App) {
 			});
 
 			if (!user) {
-				rateLimiter.recordAttempt(req.ip!, true);
+				rateLimiter.recordAttempt(req.ip!, false);
 				return res.json({ success: true });
 			}
 
@@ -278,10 +278,10 @@ export default function (app: App) {
 					.json({ error: "You have been banned." });
 			}
 
-			if (!user.discordUserId) {
-				return res.status(400)
-					.json({ error: "Your account could not be recovered as it was not linked with a Discord account. Please contact an administrator for assistance." });
-			}
+			// if (!user.discordUserId) {
+			// 	return res.status(400)
+			// 		.json({ error: "Your account could not be recovered as it was not linked with a Discord account. Please contact an administrator for assistance." });
+			// }
 
 			const recentToken = await prisma.passwordResetToken.findFirst({
 				where: {
@@ -312,16 +312,15 @@ export default function (app: App) {
 			const params = new URLSearchParams([
 				["token", resetToken.id]
 			]);
-			const resetUrl = `[Reset your password](${process.env["EXTERNAL_URL"]}/login/set-password?${params.toString()})`;
-			const message = `### Password Reset Requested
+			const resetUrl = `${process.env["EXTERNAL_URL"]}/login/set-password?${params.toString()}`;
+			const subject = `[openplace] 密码重置请求 — ${user.name}`;
+			const text = `用户 ${user.name}#${user.id} 请求了密码重置。
 
-A password reset was requested for your openplace account. If you requested this, click this link to reset your password:
+重置链接：${resetUrl}
 
-${resetUrl}
+该链接有效期为 1 小时。如果不是本人操作，请忽略此邮件。`;
 
-*Wasn't you? You can safely ignore this message.*`;
-
-			await discordBot.sendDM(user.discordUserId, message);
+			await sendEmail(subject, text);
 
 			rateLimiter.recordAttempt(req.ip!, true);
 			console.log(`[${new Date()
