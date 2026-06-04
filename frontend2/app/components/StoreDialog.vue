@@ -17,7 +17,7 @@
 	>
 		<template #header>
 			<div class="store-header">
-				<h2 class="dialog-title">Store</h2>
+				<h2 class="dialog-title">商店</h2>
 
 				<div
 					class="droplet-count"
@@ -33,9 +33,9 @@
 
 		<Tabs :value="tab">
 			<TabList>
-				<Tab :value="StoreTab.Charges">Charges</Tab>
-				<Tab :value="StoreTab.Flags">Flags</Tab>
-				<Tab :value="StoreTab.Colors">Colors</Tab>
+				<Tab :value="StoreTab.Charges">充能</Tab>
+				<Tab :value="StoreTab.Flags">旗帜</Tab>
+				<Tab :value="StoreTab.Colors">颜色</Tab>
 			</TabList>
 
 			<TabPanels>
@@ -43,8 +43,8 @@
 					<div class="store-items-grid">
 						<StoreItem
 							v-model="maxChargesQuantity"
-							title="Max Charges"
-							subtitle="Increase your limit of paint charges by 5"
+							title="最大充能"
+							subtitle="将绘画充能上限提高 5"
 							:cost="MAX_CHARGES_COST"
 							:user-droplets="userProfile?.droplets ?? 0"
 							:loading="purchasing"

@@ -7,7 +7,7 @@
 		<template #container>
 			<div class="container">
 				<div class="row header">
-					<span>Selected Area</span>
+					<span>已选区域</span>
 
 					<Button
 						text
@@ -16,7 +16,7 @@
 						icon="_"
 						severity="secondary"
 						class="close-button"
-						aria-label="Close"
+						aria-label="关闭"
 						@click="$emit('close')"
 					>
 						<CloseIcon />
@@ -29,13 +29,13 @@
 				>
 					<div class="coords coords-top-left">
 						<span
-							v-tooltip.top="'Top-left tile coordinates'"
+							v-tooltip.top="'左上角瓦片坐标'"
 							class="select"
 						>
 							{{ rectCoords.topLeft.tile[0] }}&times;{{ rectCoords.topLeft.tile[1] }}
 						</span>
 						<span
-							v-tooltip.top="'Top-left pixel coordinates'"
+							v-tooltip.top="'左上角像素坐标'"
 							class="select"
 						>
 							{{ (rectCoords.topLeft.pixel[0] ?? 0) + 1 }}&times;{{ (rectCoords.topLeft.pixel[1] ?? 0) + 1 }}
@@ -44,13 +44,13 @@
 
 					<div class="coords coords-top-right">
 						<span
-							v-tooltip.top="'Top-right tile coordinates'"
+							v-tooltip.top="'右上角瓦片坐标'"
 							class="select"
 						>
 							{{ rectCoords.topRight.tile[0] }}&times;{{ rectCoords.topRight.tile[1] }}
 						</span>
 						<span
-							v-tooltip.top="'Top-right pixel coordinates'"
+							v-tooltip.top="'右上角像素坐标'"
 							class="select"
 						>
 							{{ (rectCoords.topRight.pixel[0] ?? 0) + 1 }}&times;{{ (rectCoords.topRight.pixel[1] ?? 0) + 1 }}
@@ -69,20 +69,20 @@
 							class="select"
 						>
 							{{ widthPixels.toLocaleString() }}&times;{{ heightPixels.toLocaleString() }}<br>
-							{{ totalPixels.toLocaleString() }} {{ totalPixels === 1 ? "pixel" : "pixels" }}<br>
+							{{ totalPixels.toLocaleString() }} 像素<br>
 							<span class="area">{{ formattedArea }}</span>
 						</span>
 					</div>
 
 					<div class="coords coords-bottom-left">
 						<span
-							v-tooltip.top="'Bottom-left tile coordinates'"
+							v-tooltip.top="'左下角瓦片坐标'"
 							class="select"
 						>
 							{{ rectCoords.bottomLeft.tile[0] }}&times;{{ rectCoords.bottomLeft.tile[1] }}
 						</span>
 						<span
-							v-tooltip.top="'Bottom-left pixel coordinates'"
+							v-tooltip.top="'左下角像素坐标'"
 							class="select"
 						>
 							{{ (rectCoords.bottomLeft.pixel[0] ?? 0) + 1 }}&times;{{ (rectCoords.bottomLeft.pixel[1] ?? 0) + 1 }}
@@ -91,13 +91,13 @@
 
 					<div class="coords coords-bottom-right">
 						<span
-							v-tooltip.top="'Bottom-right tile coordinates'"
+							v-tooltip.top="'右下角瓦片坐标'"
 							class="select"
 						>
 							{{ rectCoords.bottomRight.tile[0] }}&times;{{ rectCoords.bottomRight.tile[1] }}
 						</span>
 						<span
-							v-tooltip.top="'Bottom-right pixel coordinates'"
+							v-tooltip.top="'右下角像素坐标'"
 							class="select"
 						>
 							{{ (rectCoords.bottomRight.pixel[0] ?? 0) + 1 }}&times;{{ (rectCoords.bottomRight.pixel[1] ?? 0) + 1 }}
@@ -111,7 +111,7 @@
 
 				</div>
 
-				<div class="note">Physical area is approximate.</div>
+				<div class="note">实际面积为近似值。</div>
 
 				<div
 					v-if="rectCoords && userProfile?.role === 'admin'"
@@ -123,7 +123,7 @@
 						@click="handleClearArea"
 					>
 						<EraserIcon />
-						Clear area
+						清除区域
 					</Button>
 				</div>
 			</div>

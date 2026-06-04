@@ -34,28 +34,28 @@
 		<div class="app-overlays">
 			<div class="app-overlays-zoom">
 				<MapButton
-					v-tooltip.right="'About openplace'"
+					v-tooltip.right="'关于 openplace'"
 					@click="isAboutOpen = true"
 				>
 					<InfoIcon />
 				</MapButton>
 
 				<MapButton
-					v-tooltip.right="'Zoom in'"
+					v-tooltip.right="'放大'"
 					@click="zoomIn"
 				>
 					<ZoomInIcon />
 				</MapButton>
 
 				<MapButton
-					v-tooltip.right="'Zoom out'"
+					v-tooltip.right="'缩小'"
 					@click="zoomOut"
 				>
 					<ZoomOutIcon />
 				</MapButton>
 
 				<MapButton
-					v-tooltip.right="'Measure area'"
+					v-tooltip.right="'测量距离'"
 					:severity="isMeasuring ? 'primary' : 'secondary'"
 					@click="handleMeasure"
 				>
@@ -64,7 +64,7 @@
 
 				<MapButton
 					v-if="mapBearing !== 0"
-					v-tooltip.right="'Reset map rotation'"
+					v-tooltip.right="'重置地图旋转'"
 					@click="resetMapRotation"
 				>
 					<CompassIcon />
@@ -128,26 +128,26 @@
 					rounded
 					@click="handleLogIn"
 				>
-					Log in
+					登录
 				</Button>
 
 				<MapButton
 					v-if="isLoggedIn"
-					v-tooltip.left="'Store'"
+					v-tooltip.left="'商店'"
 					@click="isStoreOpen = true"
 				>
 					<StoreIcon />
 				</MapButton>
 
 				<MapButton
-					v-tooltip.left="'Leaderboard'"
+					v-tooltip.left="'排行榜'"
 					@click="isLeaderboardOpen = true"
 				>
 					<StatsIcon />
 				</MapButton>
 
 				<MapButton
-					v-tooltip.left="'Toggle satellite'"
+					v-tooltip.left="'切换卫星图'"
 					@click="toggleSatellite"
 				>
 					<MapVectorIcon v-if="isSatellite" />
@@ -155,7 +155,7 @@
 				</MapButton>
 
 				<MapButton
-					v-tooltip.left="'Search for a location'"
+					v-tooltip.left="'搜索位置'"
 					@click="handleSearch"
 				>
 					<ExploreIcon />

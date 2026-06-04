@@ -10,7 +10,7 @@
 	>
 		<template #header>
 			<div class="notification-dialog-header">
-				<span>Notifications</span>
+				<span>通知</span>
 
 				<Button
 					v-if="hasUnread"
@@ -19,7 +19,7 @@
 					severity="secondary"
 					@click="handleMarkAllAsRead"
 				>
-					Mark all as read
+					全部标记为已读
 				</Button>
 			</div>
 		</template>
@@ -35,8 +35,8 @@
 			v-else-if="notifications.length === 0"
 			class="notification-empty"
 		>
-			<strong>No notifications</strong>
-			<span>You'll receive notifications as you use openplace.</span>
+			<strong>暂无通知</strong>
+			<span>使用 openplace 时会收到通知。</span>
 		</div>
 
 		<div

@@ -1,11 +1,11 @@
 <template>
 	<form class="form" :disabled="loading ? 'disabled' : null" @submit="submit">
-		<h2 class="head">Welcome aboard!</h2>
+		<h2 class="head">欢迎加入！</h2>
 
 		<InputText
 			v-model="username"
-			placeholder="Username"
-			aria-label="Username"
+			placeholder="用户名"
+			aria-label="用户名"
 			autocomplete="username"
 			required
 			autofocus
@@ -14,12 +14,20 @@
 
 		<InputText
 			v-model="password"
-			placeholder="Password"
-			aria-label="Password"
+			placeholder="密码"
+			aria-label="密码"
 			type="password"
 			autocomplete="new-password"
 			required
 			minlength="8"
+			:disabled="loading"
+		/>
+
+		<InputText
+			v-model="registrationCode"
+			placeholder="注册码（如有）"
+			aria-label="注册码"
+			autocomplete="off"
 			:disabled="loading"
 		/>
 
@@ -29,18 +37,18 @@
 
 		<div class="buttons-container">
 			<Button severity="primary" type="submit" :disabled="loading">
-				Register
+				注册
 			</Button>
 		</div>
 
 		<div class="agreement">
-			By registering, you agree to the rules set by the owner of this instance.
+			注册即表示您同意本实例所有者制定的规则。
 		</div>
 
 		<div class="reset-link">
-			Already have an account?
+			已有账号？
 			<RouterLink :to="loginURL">
-				Log in
+				登录
 			</RouterLink>
 		</div>
 	</form>
@@ -70,6 +78,7 @@ const { fetchUserProfile } = useUserProfile();
 const loading = ref(false);
 const username = ref("");
 const password = ref("");
+const registrationCode = ref("");
 const errorMessage = ref<string | null>(null);
 const loginURL = ref("/login");
 
@@ -102,7 +111,8 @@ const submit = async (e: Event) => {
 			credentials: "include",
 			body: {
 				username: username.value,
-				password: password.value
+				password: password.value,
+				registrationCode: registrationCode.value || undefined
 			}
 		});
 

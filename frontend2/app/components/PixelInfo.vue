@@ -18,13 +18,13 @@
 					<div class="pixel-info-row pixel-info-coords">
 						<GridIcon />
 						<span
-							v-tooltip.top="'Tile coordinates'"
+							v-tooltip.top="'瓦片坐标'"
 							class="pixel-info-select"
 						>
 							{{ coords?.tile[0] }}&times;{{ coords?.tile[1] }}
 						</span>
 						<span
-							v-tooltip.top="'Pixel coordinates'"
+							v-tooltip.top="'像素坐标'"
 							class="pixel-info-select"
 						>
 							{{ (coords?.pixel[0] ?? 0) + 1 }}&times;{{ (coords?.pixel[1] ?? 0) + 1 }}
@@ -38,7 +38,7 @@
 						icon="_"
 						severity="secondary"
 						class="pixel-info-close-button"
-						aria-label="Close"
+						aria-label="关闭"
 						@click="$emit('close')"
 					>
 						<CloseIcon />
@@ -72,7 +72,7 @@
 								size="tiny"
 							>
 								<template #prefix>
-									<span class="pixel-info-label">Painted by:</span>
+									<span class="pixel-info-label">绘制者：</span>
 								</template>
 							</UserLine>
 						</div>
@@ -94,7 +94,7 @@
 						class="pixel-info-section"
 					>
 						<p class="pixel-info-empty">
-							This pixel has not been painted yet.
+							此像素尚未被绘制。
 						</p>
 					</div>
 				</div>
@@ -103,7 +103,7 @@
 					v-else-if="failed"
 					class="pixel-info-error"
 				>
-					<p>Failed to load pixel information</p>
+					<p>加载像素信息失败</p>
 				</div>
 
 				<div
@@ -118,7 +118,7 @@
 					>
 						<FavoriteOffIcon v-if="isFavorite" />
 						<FavoriteOnIcon v-else />
-						{{ isFavorite ? 'Unfavorite' : 'Favorite' }}
+						{{ isFavorite ? '取消收藏' : '收藏' }}
 					</Button>
 
 					<Button
@@ -128,7 +128,7 @@
 						@click="$emit('report')"
 					>
 						<ReportIcon />
-						Report
+						举报
 					</Button>
 				</div>
 			</div>

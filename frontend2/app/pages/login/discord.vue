@@ -4,15 +4,15 @@
 		:disabled="loading ? 'disabled' : null"
 		@submit="submit"
 	>
-		<h2 v-if="welcome" class="head">One more step..</h2>
-		<h2 v-else class="head">Link Discord Account</h2>
+		<h2 v-if="welcome" class="head">还差最后一步..</h2>
+		<h2 v-else class="head">关联 Discord 账号</h2>
 
 		<div
 			v-if="discordUserId"
 			class="form"
 		>
 			<p>
-				<strong>Discord Username:</strong>
+				<strong>Discord 用户名：</strong>
 				{{ discordUsername }}
 			</p>
 
@@ -21,38 +21,38 @@
 				severity="success"
 			>
 				<strong v-if="boost === 'booster'">
-					Thank you for contributing to our server!
+					感谢您对我们服务器的贡献！
 				</strong>
 
 				<strong v-else-if="boost === 'active'">
-					Thanks for being an active server member!
+					感谢您成为活跃的服务器成员！
 				</strong>
 
 				<strong v-else-if="boost === 'special'">
-					You have special member status!
+					您拥有特殊成员身份！
 				</strong>
 
-				Your paint cooldown has been set to {{ cooldown }} seconds.
+				您的绘画冷却时间已设置为 {{ cooldown }} 秒。
 			</Message>
 
 			<Message
 				v-else
 				severity="info"
 			>
-				You’re not eligible for any boosts at this time. You will receive a notification when you become eligible.
+				您目前不符合任何加速条件。当您符合条件时会收到通知。
 			</Message>
 
-			<p>Do you want to unlink your Discord account?</p>
-			<p>After unlinking, you will be able to edit your Discord username field again.</p>
+			<p>您要取消关联 Discord 账号吗？</p>
+			<p>取消关联后，您可以再次编辑您的 Discord 用户名字段。</p>
 		</div>
 
 		<div
 			v-else
 			class="form"
 		>
-			<p>Connect your Discord account to openplace.</p>
-			<p>When you link your Discord account to openplace, you will receive exclusive perks such as shortened cooldown times, account recovery, and much more.</p>
-			<p>Your Discord username on your profile cannot be changed while linked. You can unlink at any time.</p>
+			<p>将您的 Discord 账号连接到 openplace。</p>
+			<p>关联 Discord 账号后，您将获得专属特权，如缩短冷却时间、账号恢复等更多功能。</p>
+			<p>关联期间，您个人资料上的 Discord 用户名无法更改。您可以随时取消关联。</p>
 		</div>
 
 		<Message
@@ -69,7 +69,7 @@
 				type="submit"
 				:disabled="loading"
 			>
-				Unlink Discord Account
+				取消关联 Discord 账号
 			</Button>
 
 			<Button
@@ -78,7 +78,7 @@
 				type="submit"
 				:disabled="loading"
 			>
-				Link Discord Account
+				关联 Discord 账号
 			</Button>
 		</div>
 
@@ -94,7 +94,7 @@
 					:class="slotProps.class"
 					:style="{ 'text-decoration': 'none' }"
 				>
-					Not now
+					暂不关联
 				</RouterLink>
 			</Button>
 		</div>
@@ -104,7 +104,7 @@
 				v-if="returnTo !== '/'"
 				:to="returnTo"
 			>
-				Cancel
+				取消
 			</RouterLink>
 		</div>
 	</form>
@@ -150,7 +150,7 @@ onMounted(async () => {
 		await $fetch(`${config.public.backendUrl}/discord/configured`);
 	} catch (error: unknown) {
 		errorMessage.value = error instanceof FetchError && error.statusCode === 503
-			? "Discord linking is not available on this instance."
+			? "此实例未启用 Discord 关联功能。"
 			: getErrorMessage(error);
 		return;
 	}

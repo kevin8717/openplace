@@ -1,7 +1,7 @@
 <template>
 	<div class="form">
-		<h2 class="head">First, let’s go over some rules..</h2>
-		<p>These rules are to ensure you have a safe and enjoyable experience on openplace.</p>
+		<h2 class="head">首先，让我们看看规则..</h2>
+		<p>这些规则旨在确保您在 openplace 上获得安全愉快的体验。</p>
 
 		<div class="section">
 			<Rules :is-visible="isVisible" />
@@ -19,7 +19,7 @@
 					:class="slotProps.class"
 					:style="{ 'text-decoration': 'none' }"
 				>
-					Continue
+					继续
 				</RouterLink>
 			</Button>
 		</div>

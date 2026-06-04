@@ -16,25 +16,25 @@
 		@update:visible="handleClose"
 	>
 		<template #header>
-			<h2 class="leaderboard-dialog-title">Leaderboard</h2>
+			<h2 class="leaderboard-dialog-title">排行榜</h2>
 		</template>
 
 		<div class="leaderboard-container">
 			<Tabs v-model:value="category">
 				<TabList>
-					<Tab value="region">Regions</Tab>
-					<Tab value="country">Countries</Tab>
-					<Tab value="player">Players</Tab>
-					<Tab value="alliance">Alliances</Tab>
+					<Tab value="region">地区</Tab>
+					<Tab value="country">国家</Tab>
+					<Tab value="player">玩家</Tab>
+					<Tab value="alliance">联盟</Tab>
 				</TabList>
 			</Tabs>
 
 			<Tabs v-model:value="timePeriod">
 				<TabList>
-					<Tab value="today">Today</Tab>
-					<Tab value="week">Week</Tab>
-					<Tab value="month">Month</Tab>
-					<Tab value="all-time">All Time</Tab>
+					<Tab value="today">今天</Tab>
+					<Tab value="week">本周</Tab>
+					<Tab value="month">本月</Tab>
+					<Tab value="all-time">全部</Tab>
 				</TabList>
 			</Tabs>
 
@@ -44,7 +44,7 @@
 					:options="countryOptions"
 					option-label="label"
 					option-value="value"
-					placeholder="Select a country"
+					placeholder="选择国家"
 					class="leaderboard-country-select"
 					fluid
 					filter

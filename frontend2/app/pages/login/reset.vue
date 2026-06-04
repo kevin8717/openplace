@@ -3,13 +3,13 @@
 		class="form"
 		@submit="submit"
 	>
-		<h2 class="head">Reset Password</h2>
-		<p>Forgot your password? Don't worry, I don't know it either.</p>
+		<h2 class="head">重置密码</h2>
+		<p>忘记密码了？别担心，我们都不知道 :)</p>
 
 		<InputText
 			v-model="username"
-			placeholder="openplace username"
-			aria-label="Username"
+			placeholder="openplace 用户名"
+			aria-label="用户名"
 			autocomplete="username"
 			required
 			autofocus
@@ -20,7 +20,7 @@
 			v-if="success"
 			severity="success"
 		>
-			Please check your DMs for a password reset link. If you did not receive a DM, ensure your privacy settings allow DMs from our server.
+			请查看您的 Discord 私信获取密码重置链接。如果没有收到，请确保您的隐私设置允许来自我们服务器的私信。
 		</Message>
 
 		<Message
@@ -36,13 +36,13 @@
 				type="submit"
 				:disabled="loading"
 			>
-				Reset Password
+				重置密码
 			</Button>
 		</div>
 
 		<div class="reset-link">
 			<RouterLink :to="loginURL">
-				Back
+				返回
 			</RouterLink>
 		</div>
 	</form>

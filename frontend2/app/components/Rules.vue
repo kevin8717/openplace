@@ -1,32 +1,32 @@
 <template>
 	<p v-if="rules === null">
-		Loading…
+		加载中…
 	</p>
 
 	<ul v-else class="rules-list">
-		<li v-if="rules.isMultiAccountAllowed"><i>🔑</i> You may create more than one account.</li>
-		<li v-else><i>🔑</i> Do not create more than one account. If multiple accounts are detected, all accounts will be banned.</li>
+		<li v-if="rules.isMultiAccountAllowed"><i>🔑</i> 您可以创建多个账号。</li>
+		<li v-else><i>🔑</i> 不要创建多个账号。如果检测到多个账号，所有账号将被封禁。</li>
 
-		<li v-if="rules.isOffensiveContentAllowed"><i>🫢</i> You may draw content that is likely to offend others.</li>
-		<li v-else><i>🫢</i> Do not draw offensive content.</li>
+		<li v-if="rules.isOffensiveContentAllowed"><i>🫢</i> 您可以绘制可能冒犯他人的内容。</li>
+		<li v-else><i>🫢</i> 不要绘制冒犯性内容。</li>
 
-		<li v-if="rules.isExplicitContentAllowed"><i>🔞</i> You may draw explicit or suggestive content.</li>
-		<li v-else><i>🔞</i> Do not draw content that is explicit or suggestive.</li>
+		<li v-if="rules.isExplicitContentAllowed"><i>🔞</i> 您可以绘制露骨或暗示性内容。</li>
+		<li v-else><i>🔞</i> 不要绘制露骨或暗示性内容。</li>
 
-		<li v-if="rules.isGriefingAllowed"><i>🖍️</i> You may draw over existing artwork to obscure it (griefing).</li>
-		<li v-else><i>🖍️</i> Do not draw over existing artwork to obscure it (griefing).</li>
+		<li v-if="rules.isGriefingAllowed"><i>🖍️</i> 您可以在现有作品上绘制以遮盖它（破坏）。</li>
+		<li v-else><i>🖍️</i> 不要覆盖现有作品（破坏）。</li>
 
-		<li v-if="rules.isKindGriefingAllowed"><i>🤝</i> You may draw over existing artwork if you are complementing it.</li>
-		<li v-else><i>🤝</i> Do not modify existing artwork, even to improve it.</li>
+		<li v-if="rules.isKindGriefingAllowed"><i>🤝</i> 如果您是在补充完善，可以在现有作品上绘制。</li>
+		<li v-else><i>🤝</i> 不要修改现有作品，即使是改进它。</li>
 
-		<li v-if="rules.isPoliticalGriefingAllowed"><i>🏴‍☠️</i> You may draw over political flags or portraits.</li>
+		<li v-if="rules.isPoliticalGriefingAllowed"><i>🏴‍☠️</i> 您可以在政治旗帜或肖像上绘制。</li>
 
-		<li v-if="!rules.isVPNAllowed"><i>🛜</i> Use of VPNs or proxies is not allowed on this instance.</li>
+		<li v-if="!rules.isVPNAllowed"><i>🛜</i> 此实例不允许使用 VPN 或代理。</li>
 
-		<li v-if="rules.isBottingAllowed"><i>🤖</i> You may use bots to automate drawing on this instance.</li>
-		<li v-else><i>🤖</i> Use of bots or any other automation is not allowed on this instance.</li>
+		<li v-if="rules.isBottingAllowed"><i>🤖</i> 您可以使用机器人自动绘制。</li>
+		<li v-else><i>🤖</i> 此实例不允许使用机器人或任何其他自动化工具。</li>
 
-		<li><i>⚠️</i> Do not create excessive traffic that may affect other people’s experience on this instance.</li>
+		<li><i>⚠️</i> 不要产生可能影响他人体验的过多流量。</li>
 	</ul>
 
 	<p v-if="rules?.extraRules">{{ rules?.extraRules }}</p>

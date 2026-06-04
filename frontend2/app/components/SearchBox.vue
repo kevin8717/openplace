@@ -15,7 +15,7 @@
 					<InputGroup class="search-input-group">
 						<Button
 							v-if="isMobile"
-							v-tooltip.bottom="'Close'"
+							v-tooltip.bottom="'关闭'"
 							severity="secondary"
 							text
 							@click="close"
@@ -29,7 +29,7 @@
 							v-model="query"
 							:suggestions="results"
 							class="search-input-box"
-							placeholder="Search the world and more…"
+							placeholder="搜索世界上的地点…"
 							@complete="handleSearch"
 							@item-select="onItemSelect"
 							@keydown="handleKeyDown"
@@ -43,7 +43,7 @@
 						</AutoComplete>
 
 						<Button
-							v-tooltip.bottom="'Random location'"
+							v-tooltip.bottom="'随机位置'"
 							severity="secondary"
 							text
 							@click="goToRandom"

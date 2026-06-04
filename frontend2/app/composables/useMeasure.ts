@@ -87,9 +87,9 @@ export const useMeasure = () => {
 		case MeasureState.Idle:
 			return null;
 		case MeasureState.SelectTopLeft:
-			return "Select top-left corner";
+			return "选择左上角";
 		case MeasureState.SelectBottomRight:
-			return "Select bottom-right corner";
+			return "选择右下角";
 		}
 	});
 

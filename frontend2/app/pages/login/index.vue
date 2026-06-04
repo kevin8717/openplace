@@ -4,12 +4,12 @@
 		:disabled="loading ? 'disabled' : null"
 		@submit="submit"
 	>
-		<h2 class="head">Great to see you!</h2>
+		<h2 class="head">欢迎回来！</h2>
 
 		<InputText
 			v-model="username"
-			placeholder="Username"
-			aria-label="Username"
+			placeholder="用户名"
+			aria-label="用户名"
 			autocomplete="username"
 			required
 			autofocus
@@ -18,8 +18,8 @@
 
 		<InputText
 			v-model="password"
-			placeholder="Password"
-			aria-label="Password"
+			placeholder="密码"
+			aria-label="密码"
 			type="password"
 			autocomplete="current-password"
 			required
@@ -40,23 +40,23 @@
 				type="submit"
 				:disabled="loading"
 			>
-				Log in
+				登录
 			</Button>
 		</div>
 
 		<div class="agreement">
-			By logging in, you agree to the rules set by the owner of this instance.
+			登录即表示您同意本实例所有者制定的规则。
 		</div>
 
 		<div class="reset-link">
-			New to openplace?
+			新来到 openplace？
 			<RouterLink :to="rulesURL">
-				Register
+				注册
 			</RouterLink>
 			<br>
-			Forgot your password?
+			忘记密码？
 			<RouterLink :to="resetURL">
-				Reset password
+				重置密码
 			</RouterLink>
 		</div>
 	</form>

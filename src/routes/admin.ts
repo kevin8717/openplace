@@ -939,4 +939,104 @@ export default function (app: App) {
 			.setHeader("Content-Type", "text/html")
 			.send(html);
 	});
+
+	// Registration code management
+	// eslint-disable-next-line max-lines-per-function
+	app.post("/staff/registration-codes", authMiddleware, adminMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { code, maxUses } = req.body;
+
+			if (!code || typeof code !== "string") {
+				return res.status(400)
+					.json({ error: "Code is required", status: 400 });
+			}
+
+			if (code.length < 4 || code.length > 64) {
+				return res.status(400)
+					.json({ error: "Code must be between 4 and 64 characters", status: 400 });
+			}
+
+			const existing = await prisma.registrationCode.findUnique({
+				where: { code }
+			});
+
+			if (existing) {
+				return res.status(400)
+					.json({ error: "Registration code already exists", status: 400 });
+			}
+
+			const newCode = await prisma.registrationCode.create({
+				data: {
+					code,
+					maxUses: Math.max(1, Number.parseInt(maxUses) || 1),
+					createdById: req.user!.id
+				}
+			});
+
+			return res.status(201)
+				.json({
+					id: newCode.id,
+					code: newCode.code,
+					maxUses: newCode.maxUses,
+					useCount: newCode.useCount,
+					createdAt: newCode.createdAt
+				});
+		} catch (error) {
+			console.error("Error creating registration code:", error);
+			return res.status(500)
+				.json({ error: "Internal Server Error", status: 500 });
+		}
+	});
+
+	app.get("/staff/registration-codes", authMiddleware, adminMiddleware, async (_req, res) => {
+		try {
+			const codes = await prisma.registrationCode.findMany({
+				orderBy: { createdAt: "desc" },
+				select: {
+					id: true,
+					code: true,
+					maxUses: true,
+					useCount: true,
+					createdAt: true,
+					createdById: true
+				}
+			});
+
+			return res.json({ codes });
+		} catch (error) {
+			console.error("Error listing registration codes:", error);
+			return res.status(500)
+				.json({ error: "Internal Server Error", status: 500 });
+		}
+	});
+
+	app.delete("/staff/registration-codes/:id", authMiddleware, adminMiddleware, async (req, res) => {
+		try {
+			const id = Number.parseInt(req.params["id"] ?? "");
+
+			if (!Number.isInteger(id) || id <= 0) {
+				return res.status(400)
+					.json({ error: "Invalid ID", status: 400 });
+			}
+
+			const existing = await prisma.registrationCode.findUnique({
+				where: { id }
+			});
+
+			if (!existing) {
+				return res.status(404)
+					.json({ error: "Registration code not found", status: 404 });
+			}
+
+			await prisma.registrationCode.delete({
+				where: { id }
+			});
+
+			return res.json({ success: true });
+		} catch (error) {
+			console.error("Error deleting registration code:", error);
+			return res.status(500)
+				.json({ error: "Internal Server Error", status: 500 });
+		}
+	});
 }

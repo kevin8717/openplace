@@ -22,13 +22,13 @@
 				<div class="palette-header">
 					<div class="palette-buttons">
 						<Button
-							v-tooltip.top="isExpanded ? 'Show free colors' : 'Show all colors'"
+							v-tooltip.top="isExpanded ? '显示免费颜色' : '显示所有颜色'"
 							severity="secondary"
 							icon="_"
 							size="small"
 							rounded
 							outlined
-							:aria-label="isExpanded ? 'Show free colors' : 'Show all colors'"
+							:aria-label="isExpanded ? '显示免费颜色' : '显示所有颜色'"
 							@click="isExpanded = !isExpanded"
 						>
 							<ZoomOutIcon v-if="isExpanded" />
@@ -36,13 +36,13 @@
 						</Button>
 
 						<Button
-							v-tooltip.top="isBottom ? 'Move to top' : 'Move to bottom'"
+							v-tooltip.top="isBottom ? '移到顶部' : '移到底部'"
 							severity="secondary"
 							icon="_"
 							size="small"
 							rounded
 							outlined
-							:aria-label="isBottom ? 'Move to top' : 'Move to bottom'"
+							:aria-label="isBottom ? '移到顶部' : '移到底部'"
 							@click="isBottom = !isBottom"
 						>
 							<ArrowUpIcon v-if="isBottom" />
@@ -53,31 +53,31 @@
 					<PaintIcon class="palette-header-icon" />
 
 					<h3 id="palette-label" class="palette-header-label">
-						Paint {{ pixelCount.toLocaleString() }} {{ pixelCount === 1 ? "pixel" : "pixels" }}
+						绘制 {{ pixelCount.toLocaleString() }} 像素
 					</h3>
 
 					<div class="palette-buttons">
 						<Button
-							v-tooltip.top="isEraserMode ? 'Switch to painting' : 'Switch to eraser'"
+							v-tooltip.top="isEraserMode ? '切换到绘制' : '切换到橡皮擦'"
 							:severity="isEraserMode ? 'danger' : 'secondary'"
 							icon="_"
 							size="small"
 							rounded
 							:outlined="!isEraserMode"
-							:aria-label="isEraserMode ? 'Switch to painting' : 'Switch to eraser'"
+							:aria-label="isEraserMode ? '切换到绘制' : '切换到橡皮擦'"
 							@click="$emit('toggleEraser')"
 						>
 							<EraserIcon />
 						</Button>
 
 						<Button
-							v-tooltip.top="pixelCount === 0 ? 'Close' : 'Discard changes'"
+							v-tooltip.top="pixelCount === 0 ? '关闭' : '放弃更改'"
 							:severity="pixelCount === 0 ? 'secondary' : 'danger'"
 							icon="_"
 							size="small"
 							rounded
 							text
-							aria-label="Close"
+							aria-label="关闭"
 							@click="$emit('close')"
 						>
 							<CloseIcon />
@@ -97,7 +97,7 @@
 								'color-button--locked': !item.isUnlocked
 							}]"
 							:raised="selectedColor === item.cssValue"
-							:aria-label="`${item.isUnlocked ? 'Select color' : 'Purchase color'}: ${item.name}`"
+							:aria-label="`${item.isUnlocked ? '选择颜色' : '购买颜色'}: ${item.name}`"
 							@click="handleSelectColor(item)">
 							<div
 								class="color-button-color"

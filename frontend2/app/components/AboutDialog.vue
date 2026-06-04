@@ -32,38 +32,38 @@
 
 			<div class="section">
 				<p>
-					openplace is a free unofficial open source backend for wplace. We aim to give the freedom and flexibility for all users to be able to make their own private wplace experience for themselves, their friends, or even their community.
+					openplace 是 wplace 的一个免费非官方开源后端。我们旨在为所有用户提供自由和灵活性，让您能够为自己、朋友甚至社区打造个性化的 wplace 体验。
 				</p>
 
 				<p v-if="isOpenplaceLive">
-					<strong>This is the official openplace.live instance.</strong> Join our <a href="https://discord.gg/ZRC4DnP9Z2">Discord community</a>!
+					<strong>这是官方 openplace.live 实例。</strong>加入我们的 <a href="https://discord.gg/ZRC4DnP9Z2">Discord 社区</a>！
 				</p>
 
 				<p v-else>
-					<strong>This is an instance of openplace.</strong> It is not affiliated with the openplace project. Please contact the administrators of this instance for any questions or issues.
+					<strong>这是一个 openplace 实例。</strong>它与 openplace 项目无关。如有任何问题，请联系此实例的管理员。
 				</p>
 			</div>
 
 			<div class="section">
-				<h3>Rules</h3>
+				<h3>规则</h3>
 
 				<p>
-					To keep openplace fair and safe for everyone, you are expected to follow these rules. Violations may result in a temporary or permanent ban.
+					为了保持 openplace 对每个人公平安全，请您遵守以下规则。违反规则可能导致临时或永久封禁。
 				</p>
 
 				<Rules :is-visible="isOpen" />
 			</div>
 
 			<p class="muted">
-				openplace is developed by <a href="https://github.com/openplaceteam/openplace/contributors" target="_blank">open source contributors</a>. It uses maps hosted by <a href="https://openfreemap.org/" target="_blank">OpenFreeMap</a>.
+				openplace 由 <a href="https://github.com/openplaceteam/openplace/contributors" target="_blank">开源贡献者</a> 开发。使用 <a href="https://openfreemap.org/" target="_blank">OpenFreeMap</a> 提供的地图服务。
 			</p>
 
 			<p class="muted">
-				<a href="https://www.openmaptiles.org/" target="_blank">© OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>
+				<a href="https://www.openmaptiles.org/" target="_blank">© OpenMapTiles</a> 数据来自 <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>
 			</p>
 
 			<p class="muted">
-				Satellite data © Google
+				卫星数据 © Google
 			</p>
 		</div>
 	</Dialog>

@@ -16,6 +16,7 @@ const SIGNUP_RATE_LIMIT_ATTEMPTS = Number.parseInt(process.env["SIGNUP_RATE_LIMI
 const SIGNUP_RATE_LIMIT_MS = Number.parseInt(process.env["SIGNUP_RATE_LIMIT_MS"] ?? "") || 3_600_000;
 const PASSWORD_RESET_RATE_LIMIT_ATTEMPTS = Number.parseInt(process.env["PASSWORD_RESET_RATE_LIMIT_ATTEMPTS"] ?? "") || 3;
 const PASSWORD_RESET_RATE_LIMIT_MS = Number.parseInt(process.env["PASSWORD_RESET_RATE_LIMIT_MS"] ?? "") || 600_000;
+const REGISTRATION_CODE = process.env["REGISTRATION_CODE"] ?? "";
 
 const userService = new UserService(prisma);
 const authService = new AuthService(prisma);
@@ -132,6 +133,39 @@ export default function (app: App) {
 			if (!UserService.isValidUsername(username)) {
 				return res.status(400)
 					.json({ error: "Username must be between 3 and 16 characters and cannot contain special characters." });
+			}
+
+			// Registration code check (env var or DB-managed codes)
+			const { registrationCode } = req.body;
+			const dbCodesCount = await prisma.registrationCode.count();
+			const hasRegistrationRequirement = REGISTRATION_CODE || dbCodesCount > 0;
+
+			if (hasRegistrationRequirement) {
+				if (!registrationCode) {
+					return res.status(400)
+						.json({ error: "Registration code is required" });
+				}
+
+				// Check env var (master code)
+				if (REGISTRATION_CODE && registrationCode === REGISTRATION_CODE) {
+					// Valid master code, proceed
+				} else {
+					// Check DB-managed code
+					const dbCode = await prisma.registrationCode.findUnique({
+						where: { code: registrationCode }
+					});
+
+					if (!dbCode || dbCode.useCount >= dbCode.maxUses) {
+						return res.status(400)
+							.json({ error: "无效的注册码" });
+					}
+
+					// Increment use count
+					await prisma.registrationCode.update({
+						where: { id: dbCode.id },
+						data: { useCount: { increment: 1 } }
+					});
+				}
 			}
 
 			const existingUser = await prisma.user.findFirst({

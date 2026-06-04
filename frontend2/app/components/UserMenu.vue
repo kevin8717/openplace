@@ -21,10 +21,10 @@
 							/>
 						</div>
 						<div class="user-stat">
-							Pixels painted: {{ user?.pixelsPainted.toLocaleString() }}
-						</div>
-						<div class="user-stat">
-							Level {{ level }} ({{ levelProgress }}%)
+						已绘制像素：{{ user?.pixelsPainted.toLocaleString() }}
+					</div>
+					<div class="user-stat">
+						等级 {{ level }}（{{ levelProgress }}%）
 						</div>
 					</div>
 				</div>
@@ -97,28 +97,28 @@ const { currentTheme, setTheme } = useTheme();
 
 const themeOptions = computed(() => [
 	{
-		label: "Light",
+		label: "浅色",
 		value: ThemeMode.Light
 	},
 	{
-		label: "Auto",
+		label: "自动",
 		value: ThemeMode.Auto
 	},
 	{
-		label: "Dark",
+		label: "深色",
 		value: ThemeMode.Dark
 	}
 ]);
 
 const menuItems = computed(() => [
 	{
-		label: "Notifications",
+		label: "通知",
 		command: () => {
 			emit("openNotifications");
 		}
 	},
 	{
-		label: "Log out",
+		label: "退出登录",
 		command: () => {
 			emit("logout");
 			emit("close");

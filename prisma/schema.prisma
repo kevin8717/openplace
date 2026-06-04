@@ -69,6 +69,7 @@ model User {
   notifications          Notification[]         @relation("NotificationUser")
   sentNotifications      Notification[]         @relation("NotificationSendingUser")
   permissions            UserPermission[]
+  createdRegistrationCodes RegistrationCode[]
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
 
@@ -448,4 +449,17 @@ model R2Image {
   contentType String
   sizeBytes   Int      @default(0)
   createdAt   DateTime @default(now())
+}
+
+model RegistrationCode {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  maxUses     Int      @default(1)
+  useCount    Int      @default(0)
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([code])
 }

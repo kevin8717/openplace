@@ -9,7 +9,7 @@
 	>
 		<PaintIcon class="paint-button-icon" />
 		<span :class="{ 'shimmer-text': hasPendingPixels }">
-			Paint {{ charges.toLocaleString() }}/{{ maxCharges.toLocaleString() }}
+			绘画 {{ charges.toLocaleString() }}/{{ maxCharges.toLocaleString() }}
 		</span>
 		<span class="paint-button-time">{{ timeUntilNext }}</span>
 	</Button>

@@ -3,12 +3,12 @@
 		class="form"
 		@submit="submit"
 	>
-		<h2 class="head">Reset Password</h2>
+		<h2 class="head">重置密码</h2>
 
 		<InputText
 			v-model="password"
-			placeholder="Password"
-			aria-label="Password"
+			placeholder="新密码"
+			aria-label="新密码"
 			type="password"
 			autocomplete="new-password"
 			required
@@ -18,8 +18,8 @@
 
 		<InputText
 			v-model="passwordConfirm"
-			placeholder="Confirm Password"
-			aria-label="Confirm Password"
+			placeholder="确认密码"
+			aria-label="确认密码"
 			type="password"
 			autocomplete="new-password"
 			required
@@ -31,7 +31,7 @@
 			v-if="success"
 			severity="success"
 		>
-			Password has been reset.
+			密码已重置。
 		</Message>
 
 		<Message
@@ -47,7 +47,7 @@
 				type="submit"
 				:disabled="loading"
 			>
-				Save
+				保存
 			</Button>
 		</div>
 	</form>
