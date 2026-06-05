@@ -1,5 +1,6 @@
 import { App, Response } from "@tinyhttp/app";
 import { authMiddleware } from "../middleware/auth.js";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../config/database.js";
 import { AuthenticatedRequest } from "../types/index.js";
 
@@ -93,20 +94,45 @@ export default function (app: App) {
 			// 标记已支付（先于数据库操作，防止并发重复处理）
 			session.paid = true;
 
-			// 执行支付逻辑：添加 droplets 并记录（使用交互式事务避免并发冲突）
-			await prisma.$transaction(async (tx) => {
-				await tx.user.update({
-					where: { id: session.userId },
-					data: { droplets: { increment: session.product.droplets + session.product.bonus } }
-				});
-				await tx.userNote.create({
-					data: {
-						userId: session.userId,
-						reportedUserId: session.userId,
-						content: `Payment (mock): ${session.lookupKey} — +${session.product.droplets + session.product.bonus} droplets`
+			// 执行支付逻辑：添加 droplets 并记录
+			// 使用 SELECT FOR UPDATE 锁定用户行 + 重试机制处理并发冲突
+			let retries = 3;
+			while (retries > 0) {
+				try {
+					await prisma.$transaction(async (tx) => {
+						// 锁定用户行防止并发更新冲突
+						const rows = await tx.$queryRaw<{ id: number }[]>(
+							Prisma.sql`SELECT id FROM User WHERE id = ${session.userId} FOR UPDATE`
+						);
+						if (rows.length === 0) return;
+
+						await tx.user.update({
+							where: { id: session.userId },
+							data: { droplets: { increment: session.product.droplets + session.product.bonus } }
+						});
+						await tx.userNote.create({
+							data: {
+								userId: session.userId,
+								reportedUserId: session.userId,
+								content: `Payment (mock): ${session.lookupKey} — +${session.product.droplets + session.product.bonus} droplets`
+							}
+						});
+					}, {
+						isolationLevel: "ReadCommitted"
+					});
+					break; // 成功，退出重试循环
+				} catch (error: any) {
+					retries--;
+					if (retries > 0 && (
+						error.message?.includes("Record has changed since last read") ||
+						error.code === "P2034"
+					)) {
+						await new Promise(r => setTimeout(r, 100));
+						continue;
 					}
-				});
-			});
+					throw error; // 非重试错误或重试用完，向上抛
+				}
+			}
 
 			const total = session.product.droplets + session.product.bonus;
 			return res.json({ redirect: `/payment/success?droplets=${total}&session_id=${session_id}` });
