@@ -4,6 +4,32 @@ applyTo: "./**"
 
 # 前端 JS 逆向分析指南
 
+## Nuxt (frontend2) 新增页面/功能开发指南
+
+### 新增页面步骤
+1. 在 `frontend2/app/pages/` 下创建 `.vue` 文件（Nuxt 自动注册路由）
+2. 如需管理员权限，使用 `definePageMeta({ layout: "admin" })`
+3. 新增的后端 API 路由需确认是否被代理
+4. 在 `src/index.ts` 中为前端页面路径添加 `frontendProxy`
+
+### 新增后台管理页面要点
+- **路径选择**：不要用 `/admin/*` 以外的已被后端静态路由占用的前缀
+- **代理配置**：在 `src/index.ts` 中添加 `app.get("/admin/*", frontendProxy)`
+- **Docker 部署**：设置 `.env` 中 `FRONTEND_HOST=frontend2` 和 `FRONTEND_PORT=3000`
+- **组件注册**：如果使用 PrimeVue 组件，需在 `nuxt.config.ts` 的 `primevue.components.include` 中添加
+
+### 注册码系统开发总结
+- **Prisma 模型**：`RegistrationCode` 表，含 `code`, `maxUses`, `useCount`, `createdById`
+- **后端 CRUD**：`POST/GET/DELETE /staff/registration-codes`（admin 权限）
+- **注册逻辑**：`auth.ts` 中同时支持环境变量万能码 + 数据库码
+- **前端页面**：`/admin/registration-codes`，使用 admin layout
+- **迁移文件**：`prisma/migrations/20260605000000_add_registration_code/`
+
+### 前端汉化约定
+- 登录注册相关页面已全部汉化（`pages/login/*`）
+- 游戏主界面组件（`components/App.vue` 等）保持英文
+- 新增页面建议同时提供中文版本
+
 ## 适用场景
 分析 Svelte 构建后的前端 JS 文件（`frontend/_app/immutable/`），推断后端 API 数据结构和路由需求。
 

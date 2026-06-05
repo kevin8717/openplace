@@ -90,23 +90,23 @@ export default function (app: App) {
 				return res.json({ redirect: `/payment/success?droplets=${total}&session_id=${session_id}` });
 			}
 
-			// 标记已支付
+			// 标记已支付（先于数据库操作，防止并发重复处理）
 			session.paid = true;
 
-			// 执行支付逻辑：添加 droplets 并记录
-			await prisma.$transaction([
-				prisma.user.update({
+			// 执行支付逻辑：添加 droplets 并记录（使用交互式事务避免并发冲突）
+			await prisma.$transaction(async (tx) => {
+				await tx.user.update({
 					where: { id: session.userId },
 					data: { droplets: { increment: session.product.droplets + session.product.bonus } }
-				}),
-				prisma.userNote.create({
+				});
+				await tx.userNote.create({
 					data: {
 						userId: session.userId,
 						reportedUserId: session.userId,
 						content: `Payment (mock): ${session.lookupKey} — +${session.product.droplets + session.product.bonus} droplets`
 					}
-				})
-			]);
+				});
+			});
 
 			const total = session.product.droplets + session.product.bonus;
 			return res.json({ redirect: `/payment/success?droplets=${total}&session_id=${session_id}` });
