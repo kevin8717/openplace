@@ -3,19 +3,25 @@ import { prisma } from "../config/database.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { AuthenticatedRequest, UserRole } from "../types/index.js";
 
+// 从前端 DU-2YUMG.js fE 对象同步，共 85 个权限
 const ALL_PERMISSIONS = [
+	// dashboard.summary.counters
 	"staff.dashboard.summary.counters.tickets",
 	"staff.dashboard.summary.counters.reports",
+	// dashboard.summary.events
 	"staff.dashboard.summary.events.status",
 	"staff.dashboard.summary.events.start",
 	"staff.dashboard.summary.events.stop",
 	"staff.dashboard.summary.events.anchors",
+	// dashboard.summary.users
 	"staff.dashboard.summary.users.ban",
 	"staff.dashboard.summary.users.timeout",
 	"staff.dashboard.summary.users.unban",
 	"staff.dashboard.summary.users.increment_droplets",
+	// dashboard.team
 	"staff.dashboard.team.tickets",
 	"staff.dashboard.team.reports",
+	// dashboard.users
 	"staff.dashboard.users.info",
 	"staff.dashboard.users.rename",
 	"staff.dashboard.users.notes_get",
@@ -23,15 +29,21 @@ const ALL_PERMISSIONS = [
 	"staff.dashboard.users.purchases",
 	"staff.dashboard.users.tickets_history",
 	"staff.dashboard.users.tickets_stats",
+	"staff.dashboard.users.appeals_history",
 	"staff.dashboard.users.timeout",
 	"staff.dashboard.users.remove_timeout",
 	"staff.dashboard.users.ban",
 	"staff.dashboard.users.remove_ban",
 	"staff.dashboard.users.personal_information",
+	"staff.dashboard.users.edit_email",
 	"staff.dashboard.users.disconnect",
 	"staff.dashboard.users.set_droplets",
+	"staff.dashboard.users.phone_verification",
+	"staff.dashboard.users.remove_picture",
+	// dashboard.permissions
 	"staff.dashboard.permissions.get",
 	"staff.dashboard.permissions.set",
+	// dashboard.alliances
 	"staff.dashboard.alliances.search",
 	"staff.dashboard.alliances.details",
 	"staff.dashboard.alliances.members",
@@ -40,21 +52,29 @@ const ALL_PERMISSIONS = [
 	"staff.dashboard.alliances.ban_all",
 	"staff.dashboard.alliances.role",
 	"staff.dashboard.alliances.remove_member",
+	// dashboard.audit_logs
 	"staff.dashboard.audit_logs.see",
-	"staff.dashboard.ban_waves.see",
-	"staff.dashboard.ban_waves.execute",
+	// dashboard.ban_appeals
 	"staff.dashboard.ban_appeals.see",
+	// dashboard.kpi
 	"staff.dashboard.kpi.tickets",
+	// dashboard.store_manager
 	"staff.dashboard.store_manager.frames",
 	"staff.dashboard.store_manager.fonts",
 	"staff.dashboard.store_manager.styles",
 	"staff.dashboard.store_manager.badges",
+	// dashboard.anticheat
+	"staff.dashboard.anticheat.see",
+	// tickets
 	"staff.tickets.assign",
 	"staff.tickets.closed_today",
 	"staff.tickets.open_count",
 	"staff.tickets.translate",
 	"staff.tickets.set_status",
 	"staff.tickets.ignore_all",
+	"staff.tickets.revert",
+	"staff.tickets.revert_review",
+	// appeals
 	"staff.appeals.assign",
 	"staff.appeals.open_count",
 	"staff.appeals.tickets_history",
@@ -62,19 +82,31 @@ const ALL_PERMISSIONS = [
 	"staff.appeals.notes_set",
 	"staff.appeals.translate",
 	"staff.appeals.solve",
+	// tools.select_area
 	"staff.tools.select_area.timeout",
 	"staff.tools.select_area.ban",
 	"staff.tools.select_area.clear",
 	"staff.tools.select_area.info",
+	"staff.tools.select_area.phone_verification",
+	"staff.tools.select_area.reverse",
+	"staff.tools.select_area.timelapse",
+	// tools.select_pixel
 	"staff.tools.select_pixel.timeout",
 	"staff.tools.select_pixel.ban",
 	"staff.tools.select_pixel.see_role",
 	"staff.tools.select_pixel.see_punishment",
-	"staff.tools.select_pixel.archive",
+	// tools.auto_painter
 	"staff.tools.auto_painter.paint",
-	"staff.tools.wayback.wayback",
+	"staff.tools.auto_painter.transparent",
+	"staff.tools.auto_painter.no_charges",
+	"staff.tools.auto_painter.as_user",
+	"staff.tools.auto_painter.no_size_limit",
+	// tools.wayback
+	"staff.tools.wayback",
+	// ui
 	"staff.ui.theme.dark_mode",
 	"staff.ui.toggle_pixel_art",
+	// cosmetics
 	"staff.cosmetics.view_cosmetics",
 	"staff.cosmetics.manage_cosmetics",
 	"staff.cosmetics.assign_cosmetics"

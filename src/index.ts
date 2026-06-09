@@ -31,6 +31,7 @@ import pixel from "./routes/pixel.js";
 import reportUser from "./routes/report-user.js";
 import store from "./routes/store.js";
 import stufftools from "./routes/stufftools.js";
+import anticheat from "./routes/anticheat.js";
 import appeal from "./routes/appeal.js";
 import auditLog from "./routes/audit-log.js";
 import { leaderboardService } from "./services/leaderboard.js";
@@ -104,30 +105,32 @@ app.use((_req, res, next) => {
 });
 
 app.use((req, res, next) => {
-	const contentType = req.get("content-type")
-		?.split(";")
-		.at(0) ?? "";
+	// 如果是 GET 或 HEAD 请求，根本不需要解析 body，直接放行
+	if (["GET", "HEAD"].includes(req.method ?? "")) {
+		return next?.();
+	}
+
+	const contentType = req.get("content-type")?.split(";").at(0) ?? "";
 
 	switch (contentType) {
 	case "multipart/form-data":
-		// Routes using form data handle their own parsing
 		return next?.();
 
 	case "application/json":
 	case "text/plain":
-		// text/plain is used because the frontend doesn't set a Content-Type...
-		// Wrap JSON middleware with error handling
+	case "": // 👈 🚀 新增：如果前端完全没传 Content-Type，也尝试用 JSON 解析器捞一把
 		try {
 			return jsonMiddleware(req, res, next);
 		} catch (error) {
-			console.warn(`[${new Date()
-				.toISOString()}] JSON parsing error for ${req.method} ${req.path} from ${req.ip}:`, error);
-			return res.status(400)
-				.json({ error: "Invalid JSON format" });
+			console.warn(`[${new Date().toISOString()}] JSON parsing error:`, error);
+			return res.status(400).json({ error: "Invalid JSON format" });
 		}
+	
+	default:
+		// 如果是其它的类型（比如 urlencoded），但你想防患于未然，可以在这里为 req.body 挂个空对象
+		req.body = req.body ?? {};
+		return next?.();
 	}
-
-	return next?.();
 });
 
 // Logging
@@ -148,6 +151,43 @@ app.use((req, _res, next) => {
 	return next?.();
 });
 
+// CORS — 完美允许所有源跨域访问（兼容 Cookie 凭证）
+app.use((req, res, next) => {
+	// 动态获取当前请求的源 (Origin)
+	const origin = req.headers["origin"] as string | undefined;
+
+	if (origin) {
+		// 动态将当前请求的源设置为允许的源，实现“允许所有源”的效果
+		res.setHeader("Access-Control-Allow-Origin", origin);
+	} else {
+		// 如果请求没有带 origin（比如移动端原生 App 或普通浏览器直接内页访问），可以兜底写 * // 但由于下面开启了 Credentials，绝大多数浏览器环境只要有跨域，都会带上 origin
+		res.setHeader("Access-Control-Allow-Origin", "*");
+	}
+
+	// 允许携带 Cookie/凭证
+	res.setHeader("Access-Control-Allow-Credentials", "true");
+	
+	// 允许的常规 HTTP 方法
+	res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+	
+	// 允许的前端自定义 Header 头（确保把你前端用到的所有自定义头都写在这里）
+	res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Cookie, X-Requested-With");
+	
+	// 预检请求（OPTIONS）的缓存时间，单位为秒（86400秒 = 24小时）
+	res.setHeader("Access-Control-Max-Age", "86400");
+
+	// 拦截并立即响应浏览器的 OPTIONS 预检请求，防止其向下漂移到业务路由
+	if (req.method === "OPTIONS") {
+		res.statusCode = 204;
+		res.end("");
+		return;
+	}
+
+	// 🔴 极其重要：放行正常的 GET/POST 等请求，让其进入后续的业务路由
+	next?.();
+});
+
+
 admin(app);
 permission(app);
 alliance(app);
@@ -166,6 +206,7 @@ payment(app);
 pixel(app);
 stufftools(app);
 reportUser(app);
+anticheat(app);
 appeal(app);
 auditLog(app);
 store(app);
@@ -209,7 +250,6 @@ app.get("/_nuxt/*", frontendProxy);
 
 app.use(sirv("./frontend", {
 	dev: isDev,
-
 	setHeaders: (res: ServerResponse, _pathname, _stats) => {
 		if (!isDev) {
 			(res as Response).set("cache-control", `public, maxage=${5 * 60}, s-maxage=${5 * 60}, stale-while-revalidate=${5 * 60}, stale-if-error=${5 * 60}`);

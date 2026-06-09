@@ -8,7 +8,8 @@ import { COOLDOWN_MS, UserService } from "../services/user.js";
 import { AuthenticatedRequest, BanReason, UserRole } from "../types/index.js";
 import { AuthService, AuthToken } from "../services/auth.js";
 import { rateLimiter } from "../services/rate-limiter.js";
-import { sendEmail } from "../services/email.js";
+import { sendEmailTo } from "../services/email.js";
+import { createErrorResponse, HTTP_STATUS } from "../utils/response.js";
 
 const LOGIN_RATE_LIMIT_ATTEMPTS = Number.parseInt(process.env["LOGIN_RATE_LIMIT_ATTEMPTS"] ?? "") || 5;
 const LOGIN_RATE_LIMIT_MS = Number.parseInt(process.env["LOGIN_RATE_LIMIT_MS"] ?? "") || 300_000;
@@ -103,7 +104,7 @@ export default function (app: App) {
 			rateLimiter.recordAttempt(req.ip!, true);
 			const date = new Date();
 			console.log(`[${date.toISOString()}] [${req.ip}] ${user.name}#${user.id} logged in`);
-			return res.json({ success: true });
+			return res.json({ success: true, needsEmail: !user.email });
 		} catch (error) {
 			console.error("Login error:", error);
 			return res.status(500)
@@ -293,7 +294,8 @@ export default function (app: App) {
 					name: true,
 					discordUserId: true,
 					banned: true,
-					role: true
+					role: true,
+					email: true
 				}
 			});
 
@@ -326,10 +328,16 @@ export default function (app: App) {
 				}
 			});
 
+			if (!user.email) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("该账户未登记邮箱地址，无法通过邮箱重置密码", HTTP_STATUS.BAD_REQUEST));
+			}
+
 			if (recentToken) {
 				const waitTime = Math.ceil((recentToken.createdAt.getTime() + 10 * 60 * 1000 - Date.now()) / 1000);
-				return res.status(429)
-					.json({ error: "You already requested a password reset recently. Please wait before sending another one." });
+				void waitTime;
+				return res.status(HTTP_STATUS.TOO_MANY_REQUESTS)
+					.json(createErrorResponse("You already requested a password reset recently. Please wait before sending another one.", HTTP_STATUS.TOO_MANY_REQUESTS));
 			}
 
 			await prisma.passwordResetToken.deleteMany({
@@ -354,7 +362,7 @@ export default function (app: App) {
 
 该链接有效期为 1 小时。如果不是本人操作，请忽略此邮件。`;
 
-			await sendEmail(subject, text);
+			await sendEmailTo(user.email, subject, text);
 
 			rateLimiter.recordAttempt(req.ip!, true);
 			console.log(`[${new Date()

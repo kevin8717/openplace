@@ -44,3 +44,24 @@ export async function sendEmail(subject: string, text: string, html?: string): P
 		console.error("[Email] Failed to send email:", error);
 	}
 }
+
+export async function sendEmailTo(to: string, subject: string, text: string, html?: string): Promise<void> {
+	const t = getTransporter();
+	if (!t) {
+		console.log(`[Email] To: ${to} [${subject}] ${text}`);
+		return;
+	}
+
+	try {
+		await t.sendMail({
+			from: EMAIL_FROM,
+			to,
+			subject,
+			text,
+			html: html ?? text
+		});
+		console.log(`[Email] Sent to ${to}: ${subject}`);
+	} catch (error) {
+		console.error(`[Email] Failed to send to ${to}:`, error);
+	}
+}

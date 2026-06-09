@@ -7,6 +7,17 @@ import { validateUpdateUser } from "../validators/user.js";
 import { createErrorResponse, HTTP_STATUS } from "../utils/response.js";
 import { prisma } from "../config/database.js";
 import { AuthenticatedRequest } from "../types/index.js";
+import { sendEmailTo } from "../services/email.js";
+
+	// 邮箱验证码存储（生产环境应改用 Redis）
+const emailVerificationCodes = new Map<number, { email: string; code: string; expiresAt: number }>();
+// 每日发送计数：key = `userId:YYYY-MM-DD`
+const dailySendCount = new Map<string, number>();
+
+function getDailyKey(userId: number): string {
+	const today = new Date().toISOString().slice(0, 10);
+	return `${userId}:${today}`;
+}
 
 // Security validation functions
 function validateImageContent(buffer: Buffer, mimeType: string): boolean {
@@ -270,8 +281,16 @@ export default function (app: App) {
 		}
 	});
 
-	app.get("/me/badges", authMiddleware, async (_req: AuthenticatedRequest, res) => {
+	app.get("/me/badges", authMiddleware, async (req: AuthenticatedRequest, res) => {
 		try {
+			const user = await prisma.user.findUnique({
+				where: { id: req.user!.id },
+				select: { equippedBadges: true }
+			});
+			const equippedIds: number[] = user?.equippedBadges
+				? JSON.parse(user.equippedBadges).filter((id: number) => id > 0)
+				: [];
+
 			const badges = await prisma.badge.findMany({
 				orderBy: { createdAt: "desc" }
 			});
@@ -284,8 +303,8 @@ export default function (app: App) {
 				reward: b.reward,
 				imageUrl: b.imageUrl,
 				type: b.type,
-				earnedAt: b.createdAt.toISOString(),
-				earned: true,
+				earnedAt: null as string | null,
+				earned: equippedIds.includes(b.id),
 				secret: b.secret
 			})));
 		} catch (error) {
@@ -417,6 +436,275 @@ export default function (app: App) {
 			});
 
 			return res.status(200).json({});
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// GET /me/email — 获取用户邮箱
+	app.get("/me/email", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const user = await prisma.user.findUnique({
+				where: { id: req.user!.id },
+				select: { email: true }
+			});
+			if (!user) {
+				return res.status(HTTP_STATUS.NOT_FOUND)
+					.json(createErrorResponse("User not found", HTTP_STATUS.NOT_FOUND));
+			}
+			return res.json({ email: user.email ?? "" });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// POST /me/email — 设置/更新邮箱
+	app.post("/me/email", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { email } = req.body;
+			if (!email || typeof email !== "string") {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Email is required", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			if (!emailRegex.test(email)) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Invalid email format", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const existing = await prisma.user.findUnique({
+				where: { email }
+			});
+			if (existing && existing.id !== req.user!.id) {
+				return res.status(409)
+					.json(createErrorResponse("Email already in use", 409));
+			}
+
+			await prisma.user.update({
+				where: { id: req.user!.id },
+				data: { email }
+			});
+
+			return res.json({ success: true });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// POST /me/email/send-code — 发送邮箱验证码
+	app.post("/me/email/send-code", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { email } = req.body;
+			if (!email || typeof email !== "string") {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Email is required", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			if (!emailRegex.test(email)) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Invalid email format", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			// 每日最多发送 3 次
+			const dailyKey = getDailyKey(req.user!.id);
+			const todayCount = dailySendCount.get(dailyKey) ?? 0;
+			if (todayCount >= 3) {
+				return res.status(HTTP_STATUS.TOO_MANY_REQUESTS)
+					.json(createErrorResponse("今日验证码发送次数已达上限（3次）", HTTP_STATUS.TOO_MANY_REQUESTS));
+			}
+
+			// 检查冷却时间（60 秒内不能重复发送）
+			const existingCode = emailVerificationCodes.get(req.user!.id);
+			if (existingCode && existingCode.expiresAt > Date.now() + 4 * 60 * 1000) {
+				return res.status(HTTP_STATUS.TOO_MANY_REQUESTS)
+					.json(createErrorResponse("Please wait before requesting a new code", HTTP_STATUS.TOO_MANY_REQUESTS));
+			}
+
+			// 生成 6 位验证码
+			const code = Math.floor(100000 + Math.random() * 900000).toString();
+			emailVerificationCodes.set(req.user!.id, {
+				email,
+				code,
+				expiresAt: Date.now() + 5 * 60 * 1000 // 5 分钟有效
+			});
+
+			// 累计发送次数
+			dailySendCount.set(dailyKey, todayCount + 1);
+
+			// 发送验证码
+			await sendEmailTo(
+				email,
+				"邮箱验证码 - openplace",
+				`您的验证码是：${code}\n验证码有效期为 5 分钟。\n如果不是您本人操作，请忽略此邮件。`,
+				`<p>您的验证码是：<b style="font-size: 24px">${code}</b></p><p>验证码有效期为 5 分钟。</p><p>如果不是您本人操作，请忽略此邮件。</p>`
+			);
+
+			return res.json({ success: true, message: "验证码已发送" });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// POST /me/email/verify — 验证邮箱验证码
+	app.post("/me/email/verify", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { email, code } = req.body;
+			if (!email || !code) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Email and code are required", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const record = emailVerificationCodes.get(req.user!.id);
+			if (!record) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("No verification code requested", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			if (record.email !== email) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Email mismatch", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			if (Date.now() > record.expiresAt) {
+				emailVerificationCodes.delete(req.user!.id);
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Verification code expired", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			if (record.code !== code) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Invalid verification code", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			// 验证通过，更新邮箱
+			await prisma.user.update({
+				where: { id: req.user!.id },
+				data: { email }
+			});
+			emailVerificationCodes.delete(req.user!.id);
+
+			return res.json({ success: true });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// GET /me/pixels-painted-today — 获取今日绘制像素数
+	app.get("/me/pixels-painted-today", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const today = new Date();
+			today.setHours(0, 0, 0, 0);
+			const result = await prisma.pixel.count({
+				where: {
+					paintedBy: req.user!.id,
+					paintedAt: { gte: today }
+				}
+			});
+			return res.json({ paintedToday: result });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// GET /me/suspension — 获取用户封禁/暂停详情
+	app.get("/me/suspension", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const user = await prisma.user.findUnique({
+				where: { id: req.user!.id },
+				select: { banned: true, suspensionReason: true, timeoutUntil: true }
+			});
+			if (!user) {
+				return res.status(HTTP_STATUS.NOT_FOUND)
+					.json(createErrorResponse("User not found", HTTP_STATUS.NOT_FOUND));
+			}
+
+			const now = new Date();
+			const isTimedOut = user.timeoutUntil > now;
+
+			if (!user.banned && !isTimedOut) {
+				return res.json({ active: false });
+			}
+
+			return res.json({
+				active: true,
+				kind: user.banned ? "ban" : "timeout",
+				reason: user.suspensionReason ?? "",
+				timeoutUntil: isTimedOut ? user.timeoutUntil.toISOString() : null
+			});
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// POST /me/rules/read — 标记规则已读
+	app.post("/me/rules/read", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			await prisma.user.update({
+				where: { id: req.user!.id },
+				data: { rulesRead: true }
+			});
+			return res.status(200).json({ success: true });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	// 简易电话验证：生成验证码（开发模式用固定码 "123456"）
+	const verificationCodes = new Map<number, { phone: string; code: string; expiresAt: number }>();
+
+	app.post("/me/send-verification-code", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { phone } = req.body ?? {};
+			if (!phone || typeof phone !== "string" || phone.length < 5) {
+				return res.status(400).json({ error: "Invalid phone number" });
+			}
+
+			// 生成 6 位验证码
+			const code = String(Math.floor(100000 + Math.random() * 900000));
+			verificationCodes.set(req.user!.id, {
+				phone,
+				code,
+				expiresAt: Date.now() + 5 * 60 * 1000 // 5 分钟有效
+			});
+
+			console.log(`[PhoneVerify] User ${req.user!.id}: code=${code} (would send SMS to ${phone})`);
+
+			return res.json({ success: true, message: "Code sent" });
+		} catch (error) {
+			return handleServiceError(error as Error, res);
+		}
+	});
+
+	app.post("/me/verify-phone", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { code } = req.body ?? {};
+			const stored = verificationCodes.get(req.user!.id);
+
+			if (!stored) {
+				return res.status(400).json({ error: "No code sent. Please request a code first." });
+			}
+
+			if (Date.now() > stored.expiresAt) {
+				verificationCodes.delete(req.user!.id);
+				return res.status(400).json({ error: "Code expired. Please request a new code." });
+			}
+
+			if (stored.code !== code) {
+				return res.status(400).json({ error: "Invalid code" });
+			}
+
+			await prisma.userChallenge.upsert({
+				where: { userId: req.user!.id },
+				create: { userId: req.user!.id, needsChallenge: false, challengeTier: null, phoneVerified: true, verifiedAt: new Date() },
+				update: { needsChallenge: false, challengeTier: null, phoneVerified: true, verifiedAt: new Date() }
+			});
+
+			verificationCodes.delete(req.user!.id);
+			console.log(`[PhoneVerify] User ${req.user!.id} verified successfully`);
+
+			return res.json({ success: true, message: "Phone verified" });
 		} catch (error) {
 			return handleServiceError(error as Error, res);
 		}

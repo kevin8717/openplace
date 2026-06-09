@@ -177,10 +177,7 @@ export default function (app: App) {
 			const rssMb = (memAfter.rss / 1024 / 1024).toFixed(1);
 			console.log(`[${date.toISOString()}] [${req.ip}] ${name}#${req.user!.id} painted ${colors.length} pixels at tile (${tileX}, ${tileY}) [heap: +${heapUsedMb}MB / total: ${heapTotalMb}MB / rss: ${rssMb}MB]`);
 
-			// 大请求后主动请求 GC，降低峰值内存
-			if (colors.length > 50000 && global.gc) {
-				global.gc();
-			}
+
 
 			if (req.ip) {
 				await userService.setLastIP(req.user!.id, req.ip);
@@ -192,12 +189,140 @@ export default function (app: App) {
 		}
 	});
 
+	// 新版 paint 接口 — 支持多 tile 批量绘制
+	// POST /paint
+	// Body: { season: 0, tiles: [{ x, y, pixels: { x[], y[], colors[] } }] }
+	app.post("/paint", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const rateLimit = rateLimiter.checkRateLimit(req.ip!, PAINT_RATE_LIMIT_ATTEMPTS, PAINT_RATE_LIMIT_MS);
+			if (!rateLimit.allowed) {
+				return res.status(429)
+					.json({ error: "Too many requests. Please slow down." });
+			}
+
+			const { season, tiles } = req.body as {
+				season: number;
+				tiles: Array<{
+					x: number;
+					y: number;
+					pixels: { x: number[]; y: number[]; colors: number[] };
+				}>;
+			};
+
+			if (!tiles || !Array.isArray(tiles) || tiles.length === 0) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Bad Request", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const seasonNum = season ?? 0;
+
+			// 限制单次请求像素数量，防止 OOM
+			const MAX_PIXELS_PER_REQUEST = 250_000;
+			let totalPixelCount = 0;
+			for (const tile of tiles) {
+				if (tile.pixels?.colors) totalPixelCount += tile.pixels.colors.length;
+			}
+			if (totalPixelCount > MAX_PIXELS_PER_REQUEST) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse(`Too many pixels. Maximum ${MAX_PIXELS_PER_REQUEST} per request.`, HTTP_STATUS.BAD_REQUEST));
+			}
+
+			// 检查用户状态（封禁/超时/需要验证）
+			const userRow = await prisma.user.findUnique({
+				where: { id: req.user!.id },
+				select: { id: true, name: true, banned: true, timeoutUntil: true }
+			}).catch(() => null);
+
+			if (userRow) {
+				if (userRow.banned) {
+					return res.status(403).json({ error: "banned" });
+				}
+				if (new Date(userRow.timeoutUntil) > new Date()) {
+					const timeoutDate = new Date(userRow.timeoutUntil);
+					return res.status(403).json({
+						error: "timeout",
+						durationMs: timeoutDate.getTime() - Date.now()
+					});
+				}
+			}
+
+			// 检查是否需要弹出挑战
+			const userChallenge = await prisma.userChallenge.findUnique({
+				where: { userId: req.user!.id }
+			}).catch(() => null);
+			if (userChallenge?.needsChallenge && userChallenge.challengeTier) {
+				return res.status(403).json({
+					error: "challenge-required",
+					tier: userChallenge.challengeTier
+				});
+			}
+
+			const account = {
+				userId: req.user!.id,
+				ip: req.ip!,
+				country: req.get("cf-ipcountry") as string ?? null
+			};
+
+			let totalPainted = 0;
+
+			for (const tile of tiles) {
+				const { x: tileX, y: tileY, pixels } = tile;
+
+				if (!pixels || !pixels.x || !pixels.y || !pixels.colors) {
+					continue;
+				}
+
+				const { x: xs, y: ys, colors } = pixels;
+				const count = xs.length;
+
+				if (count === 0 || count !== ys.length || count !== colors.length) {
+					continue;
+				}
+
+				// 转换为 PaintPixelsInput 格式：coords 为扁平化 [x1, y1, x2, y2, ...]
+				const coords: number[] = [];
+				for (let i = 0; i < count; i++) {
+					coords.push(xs[i]!, ys[i]!);
+				}
+
+				const memBefore = process.memoryUsage();
+				const result = await pixelService.paintPixels(account, { tileX, tileY, colors, coords }, seasonNum);
+				const memAfter = process.memoryUsage();
+				totalPainted += result.painted;
+
+				const heapUsedMb = ((memAfter.heapUsed - memBefore.heapUsed) / 1024 / 1024).toFixed(2);
+				const heapTotalMb = (memAfter.heapTotal / 1024 / 1024).toFixed(1);
+				const rssMb = (memAfter.rss / 1024 / 1024).toFixed(1);
 
 
 
+				const name = await userService.getUserName(req.user!.id) ?? `user:${req.user!.id}`;
+				const date = new Date();
+				console.log(`[${date.toISOString()}] [${req.ip}] ${name}#${req.user!.id} painted ${count} pixels at tile (${tileX}, ${tileY}) s${seasonNum} [heap: +${heapUsedMb}MB / total: ${heapTotalMb}MB / rss: ${rssMb}MB]`);
+			}
 
+			if (req.ip) {
+				await userService.setLastIP(req.user!.id, req.ip);
+			}
 
-
-
+			return res.json({ painted: totalPainted });
+		} catch (error) {
+			const err = error as Error & { status?: number };
+			// paintPixels 抛出的特定错误
+			if (err.message === "banned") {
+				return res.status(403).json({ error: "banned" });
+			}
+			if (err.message === "timeout") {
+				return res.status(403).json({ error: "timeout" });
+			}
+			if (err.message === "refresh") {
+				return res.status(403).json({ error: "refresh" });
+			}
+			if (err.message?.includes("colour that was not purchased")) {
+				return res.status(403).json({ error: "color-not-owned" });
+			}
+			return handleServiceError(err, res);
+		}
+	});
 }
 

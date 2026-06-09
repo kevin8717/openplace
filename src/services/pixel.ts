@@ -93,8 +93,8 @@ export class PixelService {
 	private readonly authService: AuthService;
 	private readonly userService: UserService;
 	private readonly regionCache = new Map<string, { region: Region; timestamp: number }>();
-	private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-	private readonly REGION_CACHE_MAX = 50_000; // 最多缓存 5 万条，防止长时间运行内存泄漏
+	private readonly CACHE_TTL = 60_000; // 1 minute
+	private readonly REGION_CACHE_MAX = 10_000; // 最多缓存 1 万条
 
 	constructor(private prisma: PrismaClient) {
 		this.regionService = new RegionService(prisma);
@@ -109,14 +109,14 @@ export class PixelService {
 		// Clean up cache every 10 minutes
 		setInterval(() => {
 			this.cleanupCache();
-		}, 10 * 60 * 1000);
+		}, 2 * 60 * 1000);
 
-		// 后台异步瓦片重建：每 2 秒处理一次脏瓦片队列
+		// 后台异步瓦片重建：每 500ms 处理一次脏瓦片队列
 		setInterval(() => {
 			this.processDirtyTiles().catch(err => {
 				console.error("[PixelService] Error processing dirty tiles:", err);
 			});
-		}, 2_000);
+		}, 500);
 	}
 
 	private cleanupCache(): void {
@@ -132,15 +132,16 @@ export class PixelService {
 				this.tileCache.delete(key);
 			}
 		}
+		// 堆超过 400MB 时主动 GC
+		const mem = process.memoryUsage();
+		if (global.gc && mem.heapUsed > 400 * 1024 * 1024) {
+			global.gc();
+		}
 	}
 
 	async getRandomTile(): Promise<RandomTileResult> {
-		const result = await this.prisma.pixel.aggregate({
-			_max: { id: true }
-		});
-
-		const maxId = result._max.id;
-		if (!maxId) {
+		const total = await this.prisma.pixel.count();
+		if (total === 0) {
 			console.log("Table is empty");
 			return {
 				pixel: { x: 500, y: 500 },
@@ -148,15 +149,22 @@ export class PixelService {
 			};
 		}
 
-		let randomRow = null;
-		while (!randomRow) {
-			const randomId = Math.floor(Math.random() * maxId) + 1;
-			randomRow = await this.prisma.pixel.findUnique({ where: { id: randomId } });
+		const skip = Math.floor(Math.random() * total);
+		const row = await this.prisma.pixel.findFirst({
+			skip,
+			take: 1
+		});
+
+		if (!row) {
+			return {
+				pixel: { x: 500, y: 500 },
+				tile: { x: 1024, y: 1024 }
+			};
 		}
 
 		return {
-			pixel: { x: randomRow.x, y: randomRow.y },
-			tile: { x: randomRow.tileX, y: randomRow.tileY }
+			pixel: { x: row.x, y: row.y },
+			tile: { x: row.tileX, y: row.tileY }
 		};
 	}
 
@@ -173,32 +181,36 @@ export class PixelService {
 			const pixel = await this.prisma.pixel.findUnique({
 				where: {
 					season_tileX_tileY_x_y: { season, tileX, tileY, x, y }
-				},
-				include: {
-					user: {
-						include: { alliance: true }
-					}
 				}
 			});
 
-			if (pixel) {
-				if (pixel.user.banned) {
+			if (pixel && pixel.paintedBy) {
+				const userRec = await this.prisma.user.findUnique({
+					where: { id: pixel.paintedBy },
+					include: { alliance: true }
+				});
+				if (userRec?.banned) {
 					paintedBy.push({
 						id: -1,
 						name: "Suspended Account",
 						paintedAt: pixel.paintedAt
 					});
+				} else if (userRec) {
+					paintedBy.push({
+						id: userRec.id,
+						name: userRec.nickname || userRec.name,
+						allianceId: userRec.allianceId || 0,
+						allianceName: userRec.alliance?.name || "",
+						equippedFlag: userRec.equippedFlag,
+						picture: userRec.picture,
+						discord: userRec.discord,
+						discordUserId: userRec.discordUserId,
+						verified: userRec.verified,
+						paintedAt: pixel.paintedAt
+					});
 				} else {
 					paintedBy.push({
-						id: pixel.user.id,
-						name: pixel.user.nickname || pixel.user.name,
-						allianceId: pixel.user.allianceId || 0,
-						allianceName: pixel.user.alliance?.name || "",
-						equippedFlag: pixel.user.equippedFlag,
-						picture: pixel.user.picture,
-						discord: pixel.user.discord,
-						discordUserId: pixel.user.discordUserId,
-						verified: pixel.user.verified,
+						id: pixel.paintedBy,
 						paintedAt: pixel.paintedAt
 					});
 				}
@@ -226,13 +238,21 @@ export class PixelService {
 					where: {
 						OR: slice
 					},
-					take: slice.length,
-					include: {
-						user: {
-							include: { alliance: true }
-						}
-					}
+					take: slice.length
 				}));
+			}
+
+			// 收集唯一的 paintedBy 用户 ID
+			const userIds = [...new Set(pixels.map(p => p.paintedBy).filter((id): id is number => id !== null))];
+			const users: Map<number, { id: number; nickname: string | null; name: string; banned: boolean; allianceId: number | null; alliance?: { name: string } | null; equippedFlag: number; picture: string; discord: string | null; discordUserId: string | null }> = new Map();
+			if (userIds.length > 0) {
+				const userRows = await this.prisma.user.findMany({
+					where: { id: { in: userIds } },
+					include: { alliance: true }
+				});
+				for (const u of userRows) {
+					users.set(u.id, u as any);
+				}
 			}
 
 			const pixelMap = new Map(pixels.map(item => [`${item.x},${item.y}`, item]));
@@ -240,17 +260,31 @@ export class PixelService {
 			for (let y = y0; y <= y1; y++) {
 				for (let x = x0; x <= x1; x++) {
 					const pixel = pixelMap.get(`${x},${y}`);
-					if (pixel) {
-						paintedBy.push({
-							id: pixel.user.id,
-							name: pixel.user.nickname || pixel.user.name,
-							allianceId: pixel.user.allianceId || 0,
-							allianceName: pixel.user.alliance?.name || "",
-							equippedFlag: pixel.user.equippedFlag,
-							picture: pixel.user.picture,
-							discord: pixel.user.discord,
-							discordUserId: pixel.user.discordUserId
-						});
+					if (pixel && pixel.paintedBy) {
+						const u = users.get(pixel.paintedBy);
+						if (u?.banned) {
+							paintedBy.push({
+								id: -1,
+								name: "Suspended Account",
+								paintedAt: pixel.paintedAt
+							});
+						} else if (u) {
+							paintedBy.push({
+								id: u.id,
+								name: u.nickname || u.name,
+								allianceId: u.allianceId || 0,
+								allianceName: u.alliance?.name || "",
+								equippedFlag: u.equippedFlag,
+								picture: u.picture,
+								discord: u.discord,
+								discordUserId: u.discordUserId
+							});
+						} else {
+							paintedBy.push({
+								id: pixel.paintedBy,
+								paintedAt: pixel.paintedAt
+							});
+						}
 					} else {
 						paintedBy.push({
 							id: 0
@@ -268,8 +302,8 @@ export class PixelService {
 
 	// 瓦片图像内存缓存：key = "season,tileX,tileY"
 	private readonly tileCache = new Map<string, { buffer: Buffer; updatedAt: Date; cachedAt: number }>();
-	private readonly TILE_CACHE_TTL = 60_000; // 60 秒（绘画后 updatePixelTile 会刷新缓存，无需过于频繁回源）
-	private readonly TILE_CACHE_MAX = 200;   // 最多缓存 200 个瓦片，减少回源查询
+	private readonly TILE_CACHE_TTL = 10_000; // 10 秒
+	private readonly TILE_CACHE_MAX = 100;   // 最多缓存 100 个瓦片
 
 	// ── 后台异步瓦片重建队列 ──
 	private readonly dirtyTiles = new Set<string>();
@@ -648,7 +682,7 @@ export class PixelService {
 
 		let totalPainted = 0;
 		let totalChargeCost = 0;
-		let regionStats: Array<{ regionCityId?: number | null; regionCountryId?: number | null; count: number }> = [];
+		const regionStatsMap = new Map<string, { regionCityId?: number | null; regionCountryId?: number | null; count: number }>();
 
 		await this.prisma.$executeRaw(Prisma.sql`INSERT IGNORE INTO Tile (season, x, y) VALUES (${season}, ${tileX}, ${tileY})`);
 		const paintedAt = new Date();
@@ -741,16 +775,23 @@ export class PixelService {
 						for (let j = i; j < end; j++) values.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${bx[j]}, ${by[j]})`);
 						await this.prisma.$executeRaw`DELETE FROM Pixel WHERE (season, tileX, tileY, x, y) IN (${Prisma.join(values)})`;
 					} else {
-						const values = [];
+						const pixelValues = [];
+						const historyValues = [];
 						for (let j = i; j < end; j++) {
-							values.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${bx[j]}, ${by[j]}, ${bColor[j]}, ${userId}, ${paintedAt}, ${bCityId[j] || null}, ${bCountryId[j] || null})`);
+							pixelValues.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${bx[j]}, ${by[j]}, ${bColor[j]}, ${userId}, ${paintedAt}, ${bCityId[j] || null}, ${bCountryId[j] || null})`);
+							historyValues.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${bx[j]}, ${by[j]}, ${bColor[j]}, ${userId}, ${paintedAt})`);
 						}
 						await this.prisma.$executeRaw`
 							INSERT INTO Pixel (season, tileX, tileY, x, y, colorId, paintedBy, paintedAt, regionCityId, regionCountryId)
-							VALUES ${Prisma.join(values)}
+							VALUES ${Prisma.join(pixelValues)}
 							ON DUPLICATE KEY UPDATE
 								colorId = VALUE(colorId), paintedBy = VALUE(paintedBy), paintedAt = VALUE(paintedAt),
 								regionCityId = VALUE(regionCityId), regionCountryId = VALUE(regionCountryId)
+						`;
+						// 记录像素变更历史 — 纯追加，用于 reverse/timestamps
+						await this.prisma.$executeRaw`
+							INSERT INTO PixelHistory (season, tileX, tileY, x, y, colorId, paintedBy, paintedAt)
+							VALUES ${Prisma.join(historyValues)}
 						`;
 					}
 					if (end < batchValidCount) await new Promise(r => setTimeout(r, 10));
@@ -760,26 +801,20 @@ export class PixelService {
 			// V8 现在可以回收这些 ~100KB TypedArrays
 
 			totalPainted += batchValidCount;
-			regionStats.push(...batchRegionStats);
+			// 直接合并到 regionStatsMap 而非中间数组
+			for (const s of batchRegionStats) {
+				const key = `${s.regionCityId ?? "null"}-${s.regionCountryId ?? "null"}`;
+				const existing = regionStatsMap.get(key);
+				if (existing) existing.count += s.count;
+				else regionStatsMap.set(key, { ...s });
+			}
 			(batchRegionStats as any) = null;
 			
-			if (global.gc) global.gc();
 			await new Promise(r => setTimeout(r, 10));
 		}
 
 		if (totalPainted === 0) return { painted: 0 };
 		const painted = totalPainted;
-
-		// 将 regionStats 数组转换回 Map 用于后续处理
-		const regionStatsMap = new Map<string, { regionCityId?: number | null; regionCountryId?: number | null; count: number }>();
-		for (const stat of regionStats) {
-			const key = `${stat.regionCityId ?? "null"}-${stat.regionCountryId ?? "null"}`;
-			const existing = regionStatsMap.get(key);
-			if (existing) existing.count += stat.count;
-			else regionStatsMap.set(key, { ...stat });
-		}
-		// 释放临时数组
-		(regionStats as any) = null;
 
 		if (!isClearingPixels) {
 			const paintedRewards = {
@@ -895,6 +930,11 @@ export class PixelService {
 		// updatePixelTile 全量查询瓦片中所有像素 + createCanvas + sharp 量化，
 		// 同步执行会在画完大量像素后叠加内存峰值导致 OOM
 		this.markTileDirty(tileX, tileY, season);
+
+		// 大批量绘制后尝试回收内存
+		if (painted > 1000) {
+			setImmediate(() => this.maybeCleanupMemory());
+		}
 		
 		if (painted > 0) {
 			let retries = 5;
@@ -923,6 +963,34 @@ export class PixelService {
 		}
 
 		return { painted };
+	}
+
+	/**
+	 * 内存回收：超过阈值时清理缓存并触发 GC
+	 */
+	private async maybeCleanupMemory(force = false): Promise<void> {
+		const mem = process.memoryUsage();
+		const HEAP_LIMIT = 600 * 1024 * 1024; // 600MB
+		if (!force && mem.heapUsed < HEAP_LIMIT) return;
+
+		// 清理过期 region 缓存
+		const now = Date.now();
+		for (const [key, value] of this.regionCache) {
+			if (now - value.timestamp > this.CACHE_TTL) {
+				this.regionCache.delete(key);
+			}
+		}
+
+		// 清理过期瓦片缓存
+		for (const [key, value] of this.tileCache) {
+			if (now - value.cachedAt > this.TILE_CACHE_TTL) {
+				this.tileCache.delete(key);
+			}
+		}
+
+		if (global.gc && mem.heapUsed > HEAP_LIMIT) {
+			global.gc();
+		}
 	}
 
 
@@ -1116,17 +1184,24 @@ export class PixelService {
 				const DB_BATCH = 500;
 				for (let i = 0; i < count; i += DB_BATCH) {
 					const end = Math.min(i + DB_BATCH, count);
-					const values: Prisma.Sql[] = [];
+					const pixelValues: Prisma.Sql[] = [];
+					const historyValues: Prisma.Sql[] = [];
 					for (let j = i; j < end; j++) {
-						values.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${xs[j]}, ${ys[j]}, ${colorIds[j]}, ${userId}, ${paintedAt})`);
+						pixelValues.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${xs[j]}, ${ys[j]}, ${colorIds[j]}, ${userId}, ${paintedAt})`);
+						historyValues.push(Prisma.sql`(${season}, ${tileX}, ${tileY}, ${xs[j]}, ${ys[j]}, ${colorIds[j]}, ${userId}, ${paintedAt})`);
 					}
 					await this.prisma.$executeRaw`
 						INSERT INTO Pixel (season, tileX, tileY, x, y, colorId, paintedBy, paintedAt)
-						VALUES ${Prisma.join(values)}
+						VALUES ${Prisma.join(pixelValues)}
 						ON DUPLICATE KEY UPDATE
 							colorId = VALUES(colorId),
 							paintedBy = VALUES(paintedBy),
 							paintedAt = VALUES(paintedAt)
+					`;
+					// 记录像素变更历史
+					await this.prisma.$executeRaw`
+						INSERT INTO PixelHistory (season, tileX, tileY, x, y, colorId, paintedBy, paintedAt)
+						VALUES ${Prisma.join(historyValues)}
 					`;
 				}
 

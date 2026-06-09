@@ -60,18 +60,95 @@
 			</RouterLink>
 		</div>
 	</form>
+
+	<!-- 邮箱验证弹窗 -->
+	<Dialog
+		v-model:visible="showEmailDialog"
+		header="验证邮箱"
+		:modal="true"
+		:closable="false"
+		:draggable="false"
+		:style="{ width: '400px' }"
+	>
+		<div class="email-dialog-content">
+			<!-- 第一步：输入邮箱 -->
+			<template v-if="emailStep === 'input'">
+				<p>请填写您的邮箱地址以完成登录。</p>
+				<InputText
+					v-model="newEmail"
+					placeholder="请输入邮箱地址"
+					type="email"
+					class="email-input"
+					autocomplete="email"
+					:disabled="emailSubmitting"
+				/>
+				<Message
+					v-if="emailError"
+					severity="error"
+				>
+					{{ emailError }}
+				</Message>
+			</template>
+			<!-- 第二步：输入验证码 -->
+			<template v-else-if="emailStep === 'code'">
+				<p>验证码已发送至 <b>{{ newEmail }}</b>，请输入验证码。</p>
+				<InputText
+					v-model="verificationCode"
+					placeholder="请输入 6 位验证码"
+					class="email-input"
+					maxlength="6"
+					:disabled="emailSubmitting"
+				/>
+				<div class="code-actions">
+					<Button
+						severity="secondary"
+						text
+						:disabled="codeCooldown > 0"
+						@click="resendCode"
+					>
+						{{ codeCooldown > 0 ? `${codeCooldown}s 后重发` : "重新发送" }}
+					</Button>
+				</div>
+				<Message
+					v-if="emailError"
+					severity="error"
+				>
+					{{ emailError }}
+				</Message>
+			</template>
+		</div>
+		<template #footer>
+			<Button
+				v-if="emailStep === 'input'"
+				severity="primary"
+				:disabled="emailSubmitting || !newEmail"
+				@click="sendCode"
+			>
+				发送验证码
+			</Button>
+			<Button
+				v-else
+				severity="primary"
+				:disabled="emailSubmitting || verificationCode.length !== 6"
+				@click="verifyCode"
+			>
+				验证
+			</Button>
+		</template>
+	</Dialog>
 </template>
 
 <script setup lang="ts">
 import Button from "primevue/button";
 import Message from "primevue/message";
+import Dialog from "primevue/dialog";
 import { useErrorToast } from "~/composables/useErrorToast";
 
 const { getErrorMessage } = useErrorToast();
 
 interface LoginResponse {
 	success: boolean;
-	isNewAccount: boolean;
+	needsEmail?: boolean;
 	error?: string;
 }
 
@@ -90,6 +167,16 @@ const errorMessage = ref<string | null>(null);
 const registerURL = ref("/login/register");
 const rulesURL = ref("/login/rules");
 const resetURL = ref("/login/reset");
+
+// 邮箱验证状态
+const showEmailDialog = ref(false);
+const emailStep = ref<"input" | "code">("input");
+const newEmail = ref("");
+const verificationCode = ref("");
+const emailError = ref<string | null>(null);
+const emailSubmitting = ref(false);
+const codeCooldown = ref(0);
+let codeCooldownTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
 	const returnTo = route.query.r as string;
@@ -119,6 +206,63 @@ const done = (replace = false) => {
 	}
 };
 
+const sendCode = async () => {
+	emailSubmitting.value = true;
+	emailError.value = null;
+
+	try {
+		const config = useRuntimeConfig();
+		await $fetch(`${config.public.backendUrl}/me/email/send-code`, {
+			method: "POST",
+			credentials: "include",
+			body: { email: newEmail.value }
+		});
+		emailStep.value = "code";
+		startCodeCooldown();
+	} catch (error: unknown) {
+		emailError.value = getErrorMessage(error);
+	} finally {
+		emailSubmitting.value = false;
+	}
+};
+
+const startCodeCooldown = () => {
+	codeCooldown.value = 60;
+	if (codeCooldownTimer) clearInterval(codeCooldownTimer);
+	codeCooldownTimer = setInterval(() => {
+		codeCooldown.value--;
+		if (codeCooldown.value <= 0) {
+			if (codeCooldownTimer) clearInterval(codeCooldownTimer);
+		}
+	}, 1000);
+};
+
+const resendCode = async () => {
+	if (codeCooldown.value > 0) return;
+	await sendCode();
+};
+
+const verifyCode = async () => {
+	emailSubmitting.value = true;
+	emailError.value = null;
+
+	try {
+		const config = useRuntimeConfig();
+		await $fetch(`${config.public.backendUrl}/me/email/verify`, {
+			method: "POST",
+			credentials: "include",
+			body: { email: newEmail.value, code: verificationCode.value }
+		});
+		showEmailDialog.value = false;
+		if (codeCooldownTimer) clearInterval(codeCooldownTimer);
+		done();
+	} catch (error: unknown) {
+		emailError.value = getErrorMessage(error);
+	} finally {
+		emailSubmitting.value = false;
+	}
+};
+
 const submit = async (e: Event) => {
 	e.preventDefault();
 	loading.value = true;
@@ -126,7 +270,7 @@ const submit = async (e: Event) => {
 
 	try {
 		const config = useRuntimeConfig();
-		const { success, error } = await $fetch<LoginResponse>(`${config.public.backendUrl}/login`, {
+		const res = await $fetch<LoginResponse>(`${config.public.backendUrl}/login`, {
 			method: "POST",
 			credentials: "include",
 			body: {
@@ -135,10 +279,19 @@ const submit = async (e: Event) => {
 			}
 		});
 
-		if (success) {
+		if (res.success) {
+			if (res.needsEmail) {
+				// 邮箱为空，强制验证后再跳转
+				emailStep.value = "input";
+				newEmail.value = "";
+				verificationCode.value = "";
+				emailError.value = null;
+				showEmailDialog.value = true;
+				await new Promise<void>(() => {});
+			}
 			done();
 		} else {
-			throw new Error(error);
+			throw new Error(res.error);
 		}
 	} catch (error: unknown) {
 		errorMessage.value = getErrorMessage(error);
@@ -150,4 +303,19 @@ const submit = async (e: Event) => {
 
 <style scoped>
 /* */
+.email-dialog-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+.email-dialog-content p {
+	margin: 0;
+}
+.email-input {
+	width: 100%;
+}
+.code-actions {
+	display: flex;
+	justify-content: center;
+}
 </style>

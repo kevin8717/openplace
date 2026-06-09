@@ -4,6 +4,8 @@
 
 [Wplace](https://wplace.live)的技术栈、协议及接口的分析。
 
+> 本文档基于对 Wplace 前端（Svelte 编译产物 `frontend/_app/immutable/`）的逆向分析编写，描述的是前端期望的 API 接口结构，而非本地后端实现。
+
 免责声明：部分没有被引用的接口没有列出，因为随时有可能移除，如果有任何错误，请及时联系我。
 
 目录：
@@ -55,9 +57,17 @@
   - [GET `/s0/pixel/{tileX}/{tileY}?x={x}&y={y}`](#get-s0pixeltilextileyxxyy)
   - [GET `/files/s0/tiles/{tileX}/{tileY}.png`](#get-filess0tilestilextileypng)
   - [POST `/s0/pixel/{tileX}/{tileY}`](#post-s0pixeltilextiley)
+  - [POST `/paint`](#post-paint)
   - [POST `/report-user`](#post-report-user)
+  - [POST `/staff/dashboard/users/phone-verification`](#post-staffdashboardusersphone-verification)
+  - [POST `/staff/tools/select-area/phone-verification`](#post-stafftoolsselect-areaphone-verification)
 
 - [反作弊](#反作弊)
+  - [`lp` - LocalStorage检测](#lp---localstorage检测)
+  - [Turnstile - 验证码](#turnstile---验证码)
+  - [FingerprintJS - 浏览器指纹](#fingerprintjs---浏览器指纹)
+  - [Pawtect](#pawtect)
+  - [Challenge 系统（反作弊挑战）](#challenge-系统反作弊挑战)
 - [附录](#附录)
   - [通用API错误](#通用api错误)
   - [全部颜色表](#全部颜色表)
@@ -345,23 +355,39 @@ Token是一段被编码的文本，而不是一个普通的随机字符串，可
 	"isCustomer": false,
 	// float: 等级
 	"level": 94.08496005353335,
-	// int: 最大的收藏数量，默认为15，暂时没有发现如何提升
+	// int: 最大的收藏数量（从数据库读取）
 	"maxFavoriteLocations": 15,
 	// string: 用户名
 	"name": "username",
-	// boolean: 是否需要手机号验证，如果是则会在访问时弹出手机号验证窗口
-	"needsPhoneVerification": false,
-	// string: 头像URL或base64，需要根据前缀判断（例如data:image/png;base64,)
+	// string: Discord 用户 ID（原 discordUserId）
+	"discordId": "",
+	// string: 头像URL或base64
 	"picture": "",
 	// int: 已经绘制的像素数量
 	"pixelsPainted": 114514,
 	// boolean: 是否在alliance页面展示你最后一次绘制的位置
 	"showLastPixel": true,
+	// boolean: 是否免费旗帜
+	"freeFlag": false,
+	// boolean: 是否在热点地图中隐藏
+	"hotspotsOptOut": false,
+	// boolean: 是否展示 Discord
+	"showDiscord": true,
+	// boolean: 是否已阅读规则
+	"rulesRead": false,
+	// object: 装备边框 URL（查 Frame 表）
+	"equippedFrameUrl": "",
+	// object: 装备名称装扮（null 或 { fontId, styleId, resolved: { text } }）
+	"equippedNameCosmetic": null,
+	// array: 三个徽章槽位 [null | { id, imageUrl, name, rarity }]
+	"equippedBadges": [null, null, null],
 	// string: 处罚到期时间
 	// - 若为过去时间 → 无处罚
 	// - 若为未来时间但 < 当前时间+1年 → 禁言（timeout）
 	// - 若 >= 当前时间+1年 → 封禁（ban）
 	"timeoutUntil": "1970-01-01T00:00:00Z",
+	// array: 用户权限列表（仅在非空时返回）
+	"permissions": ["staff.tools.select_area.reverse"],
 }
 ```
 
@@ -1502,7 +1528,7 @@ Tile和像素位置之间的关系，参阅[瓦片](#瓦片)
 
 ### POST `/s0/pixel/{tileX}/{tileY}`
 
-绘制像素
+> 旧版绘制接口，按瓦片分组。新的批量绘制接口见 POST `/paint`。
 
 需要添加反作弊请求头`x-pawtect-variant`和`x-pawtect-token`，请参阅[反作弊](#反作弊)
 
@@ -1554,6 +1580,66 @@ Tile和像素位置之间的关系，参阅[瓦片](#瓦片)
 ```
 
 > 验证码token或pawtect无效
+
+### POST `/paint`
+
+新版批量绘制接口，支持跨多 Tile 一次性提交。前端通过 API 客户端 `paint()` 方法（`DU-2YUMG.js`）调用。
+
+#### 请求
+
+- 需要 `j` 完成认证
+- 需要添加反作弊请求头 `x-pawtect-variant` 和 `x-pawtect-token`（由 WASM 模块签名生成，参阅 [Pawtect](#pawtect)）
+- 可能返回 `challenge-required`，前端自动处理挑战并重试
+
+#### 示例请求
+
+#### 示例请求
+
+```jsonc
+{
+	"season": 0,
+	"tiles": [
+		{
+			"x": 1672,
+			"y": 892,
+			"pixels": {
+				"x": [140, 141, 141, 142],
+				"y": [359, 359, 358, 358],
+				"colors": [49, 49, 49, 49]
+			}
+		}
+	]
+}
+```
+
+#### 成功返回
+
+```jsonc
+{
+	"painted": 4
+}
+```
+
+#### 错误返回 — 需要挑战
+
+```jsonc
+{
+	"error": "challenge-required",
+	"tier": 4
+}
+```
+> 前端收到后自动弹出对应 tier 的挑战，完成后自动重试请求
+
+#### 相关错误码
+
+| error | status | 说明 |
+|---|---|---|
+| `banned` | 403 | 账号被封禁 |
+| `timeout` | 403 | 账号被禁言（含 `durationMs`） |
+| `challenge-required` | 403 | 需要完成反作弊挑战（含 `tier`），前端自动弹窗并重试 |
+| `color-not-owned` | 403 | 使用了未解锁的颜色 |
+| `refresh` | 403 | 需要刷新页面 |
+| `cf-mitigated: challenge` | 403 (header) | Cloudflare Under Attack 模式，需浏览器质询 |
 
 ### POST `/report-user`
 
@@ -1738,6 +1824,58 @@ curl -X POST "https://backend.wplace.live/report-user" \
 ["staff.dashboard.summary.counters.tickets"]
 ```
 
+### POST `/staff/dashboard/users/phone-verification`
+
+后台管理员手动触发用户电话验证
+
+#### 请求
+
+- 需要 `j` 完成认证
+- 需要 admin 权限
+
+#### 示例请求
+
+```jsonc
+{
+  "userIds": [1, 2],
+  "notes": "Suspected multi-accounting"
+}
+```
+
+#### 成功返回
+
+```jsonc
+{
+  "affected": 2
+}
+```
+
+### POST `/staff/tools/select-area/phone-verification`
+
+Select-Area 工具中批量触发选定用户的电话验证
+
+#### 请求
+
+- 需要 `j` 完成认证
+- 需要 `staff.tools.select_area.phone_verification` 权限
+
+#### 示例请求
+
+```jsonc
+{
+  "userIds": [1, 2, 3]
+}
+```
+
+#### 成功返回
+
+```jsonc
+{
+  "success": true,
+  "affected": 3
+}
+```
+
 ## 反作弊
 
 对于[/s0/pixel/{tileX}/{tileY}](#post-s0pixeltilextiley)接口wplace添加了多个反作弊措施防止自动绘制和多账号。
@@ -1769,21 +1907,23 @@ wplace使用了[Turnstile验证码](https://www.cloudflare.com/application-servi
 
 通常来说这个验证码不会频繁弹出，但是如果服务器处于高负载启动了Under Attack模式则会在每次绘制之前弹出。
 
-Site Key为`0x4AAAAAABpqJe8FO0N84q0F`
-启用代码段
-'''
-const vLSTrue = "false";
-const vLSHttpsbackendwplaceli = "/files";
-const vLS0x4AAAAAABpHqZ6i7uL0 = "0x4AAAAAABpHqZ-6i7uL0nmG";
-const vLSHttpsbackendwplaceli2 = "";
-const vLSTheme = "theme";
-'''
+Site Key为`0x4AAAAAABpHqZ-6i7uL0nmG`（当前版本，来自 `yew7vgrr.js`）
+
+> 旧版 site key `0x4AAAAAABpqJe8FO0N84q0F` 已废弃
 
 #### 解决方案
 
 - 打码平台付费自动通过验证码API
 - 通过中间人代理抓取到`https://challenges.cloudflare.com`中的`cf-turnstile-response`字段（在服务器没有开启Under Attack模式的情况下）
 - 自己打开一个浏览器挂脚本自动刷然后通过浏览器插件发回客户端。
+
+### hCaptcha - 验证码（Tier 3）
+
+wplace 可选使用 hCaptcha 作为 Tier 3 反作弊挑战，加载 `https://js.hcaptcha.com/1/api.js`。
+
+Site Key：`8d582454-e5ec-4314-b1c2-89e460ac1d28`（来自 `yew7vgrr.js`，作为 `d` 导出，在挑战对话框组件中作为 siteKey 传入 hCaptcha render）
+
+与 Turnstile 类似，仅在高风险场景下触发，可能被配置为静默通过。
 
 ### FingerprintJS - 浏览器指纹
 
@@ -1792,6 +1932,9 @@ const vLSTheme = "theme";
 wplace使用[FingerprintJS](https://fingerprint.com/)来上报`visitorId`（fp字段）来检测多账号和机器人。
 
 也就是通过`User-Agent`, `屏幕分辨率`, `时区`等数据检测浏览器是不是无头、匿名模式等。
+
+Browser Key（用于 FingerprintJS Pro 初始化）：
+`8d582454-e5ec-4314-b1c2-89e460ac1d28`（来自 `yew7vgrr.js`）
 
 并且有`0.001%`的概率将你的信息卖给FingerprintJS的提供商。
 
@@ -1953,6 +2096,88 @@ function postPaw(url, bodyStr, userId) {
 	m.request_url(urlPtr, J);
 	const loadPayload = m.get_load_payload();
 	const sign = fn(bodyStr);
+}
+```
+
+### 前端密钥汇总
+
+`yew7vgrr.js` 中定义的所有密钥和配置常量：
+
+| 导出名 | 变量 | 值 | 用途 |
+|---|---|---|---|
+| `c` (→ `bi`) | `or` | `0x4AAAAAABpHqZ-6i7uL0nmG` | Turnstile Site Key（Tier 2 验证码） |
+| `d` (→ `wi`) | `rr` | `8d582454-e5ec-4314-b1c2-89e460ac1d28` | hCaptcha Site Key（Tier 3 验证码）/ FingerprintJS Browser Key |
+| `b` | `ar` | `pk_live_51RMHjBAtY4KIdFGnnJ9ZHjvgP68opqg7wlT7fA1HG3p91vfhVQyn6je810y5Cz3ggTycnJtFRkwHsYy1qJEyKRFW00x1i0iWMl` | Stripe Publishable Key |
+| `e` | `cr` | `http://localhost:3001/files` | 后端文件服务 URL |
+| `P` | `ur` | `http://localhost:3001` | 后端 API 基础 URL |
+| `j` | `tr` | `https://tiles.openfreemap.org` | 地图瓦片服务 URL |
+| `h` | `ir` | `true` | 功能开关 |
+| `d` 另用 | `rr` | `8d582454-e5ec-4314-b1c2-89e460ac1d28` | FingerprintJS Pro Browser Key |
+
+### Challenge 系统（反作弊挑战）
+
+绘制接口遇到需要验证时返回 `403 { error: "challenge-required", tier: N }`，前端自动弹出对应挑战，完成后自动重试绘制。
+
+#### Challenge Tier
+
+| Tier | 类型 | 说明 |
+|---|---|---|
+| 1 | PoW（工作量证明） | Web Worker 后台计算 SHA-256，无 UI |
+| 2 | Turnstile (Cloudflare) | 加载 Cloudflare 验证码（可能静默通过） |
+| 3 | hCaptcha | 加载 hCaptcha 验证码（可能静默通过） |
+| 4 | OTP（短信验证） | 弹出电话验证对话框，需要用户输入 |
+
+#### 触发方式
+
+**方式一：Staff 手动触发**
+```
+POST /staff/dashboard/users/phone-verification  { userIds, notes }
+POST /staff/tools/select-area/phone-verification { userIds, notes }
+```
+→ 写入 `UserChallenge` 表，设置 `needsChallenge = true, challengeTier = 4`
+
+**方式二：服务端在 POST /paint 时返回**
+```jsonc
+// 响应 403
+{
+  "error": "challenge-required",
+  "tier": 4
+}
+```
+
+#### 验证流程（Tier 4 OTP）
+
+```
+1. 前端弹窗 → GET /anticheat/otp/cooldown → { cooldownMs }
+2. 用户输入号码 → POST /anticheat/otp/send { phone }
+   → 后端 SHA-256 哈希电话，检查重复
+   → 响应 { channel: "sms", phone: "***", cooldownMs }
+3. 用户输入 6 位验证码 → POST /anticheat/challenge/verify { code }
+   → 验证通过 → 清除 needsChallenge → 前端自动重试 /paint
+```
+
+#### 相关端点
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/anticheat/challenge/verify` | POST | 统一验证入口（PoW/captcha/OTP） |
+| `/anticheat/otp/cooldown` | GET | 获取 OTP 冷却时间 |
+| `/anticheat/otp/send` | POST | 发送 OTP 验证码 |
+| `/anticheat/captcha/session` | POST | 提交 Turnstile/hCaptcha token |
+| `/anticheat/pow/challenge` | GET | 获取 PoW 工作量证明题目 |
+
+#### 数据表
+
+```prisma
+model UserChallenge {
+  userId         Int      @id
+  phoneHash      String?  // SHA-256 电话哈希
+  phoneVerified  Boolean  @default(false)
+  needsChallenge Boolean  @default(false)  // 下次绘画是否弹挑战
+  challengeTier  Int?     // 1-4
+  verifiedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 ```
 

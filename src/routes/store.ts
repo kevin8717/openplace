@@ -10,7 +10,7 @@ import { calculateChargeRecharge } from "../utils/charges.js";
 import { AuthenticatedRequest } from "../types/index.js";
 import { createErrorResponse, HTTP_STATUS } from "../utils/response.js";
 import { handleServiceError } from "../middleware/errorHandler.js";
-import { User } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 const UPLOAD_DIR = path.resolve("frontend/img/store");
 
@@ -49,92 +49,93 @@ export default function (app: App) {
 					.json({ error: "Invalid item", status: 400 });
 			}
 
-			const user = await prisma.user.findUnique({
-				where: { id: req.user!.id }
-			});
-
-			if (!user) {
-				return res.status(401)
-					.json({ error: "Unauthorized", status: 401 });
-			}
-
-			const amount = product.amount ?? 1;
-
-			// Strict validation for amount
-			if (typeof amount !== "number" ||
-				!Number.isFinite(amount) ||
-				!Number.isInteger(amount) ||
-				amount < 1) {
-				console.warn(`[${new Date()
-					.toISOString()}] Invalid purchase amount from ${req.ip}:`, amount);
-				return res.status(400)
-					.json({ error: "Bad Request", status: 400 });
-			}
-
-			const totalCost = item.price * amount;
-
-			if (user.droplets < totalCost) {
-				return res.status(403)
-					.json({ error: "Forbidden", status: 403 });
-			}
-
-			const updateData: Partial<User> = {
-				droplets: user.droplets - totalCost
-			};
-
-			switch (item.type) {
-			case "charges":
-				updateData.maxCharges = user.maxCharges + (5 * amount);
-				break;
-
-			case "paint": {
-				const currentCharges = calculateChargeRecharge(
-					user.currentCharges,
-					user.maxCharges,
-					user.chargesLastUpdatedAt || new Date(),
-					user.chargesCooldownMs
+			// 用事务+行锁防止并发购买时 Error 1020
+			await prisma.$transaction(async (tx) => {
+				const rows = await tx.$queryRaw<{
+					id: number; droplets: number; maxCharges: number; currentCharges: number;
+					chargesLastUpdatedAt: Date; chargesCooldownMs: number;
+					extraColorsBitmap: number; flagsBitmap: Buffer | null;
+				}[]>(
+					Prisma.sql`SELECT id, droplets, maxCharges, currentCharges, chargesLastUpdatedAt, chargesCooldownMs, extraColorsBitmap, flagsBitmap FROM User WHERE id = ${req.user!.id} LIMIT 1 FOR UPDATE`
 				);
-				updateData.currentCharges = currentCharges + (30 * amount);
-				updateData.chargesLastUpdatedAt = new Date();
-				break;
-			}
-
-			case "color":
-				if (product.variant) {
-					const variant = Number(product.variant);
-					if (!Number.isInteger(variant) || variant < 32 || variant > 63) {
-						console.warn(`[${new Date()
-							.toISOString()}] Invalid color variant from ${req.ip}:`, product.variant);
-						return res.status(400)
-							.json({ error: "Bad Request", status: 400 });
-					}
-					const mask = 1 << (variant - 32);
-					updateData.extraColorsBitmap = user.extraColorsBitmap | mask;
+				const userRow = rows[0];
+				if (!userRow) {
+					throw new Error("User not found");
 				}
-				break;
 
-			case "flag":
-				if (product.variant) {
-					const variant = Number(product.variant);
-					if (!Number.isInteger(variant) || variant < 1 || variant > 251) {
-						console.warn(`[${new Date()
-							.toISOString()}] Invalid flag variant from ${req.ip}:`, product.variant);
-						return res.status(400)
-							.json({ error: "Bad Request", status: 400 });
-					}
-					const flagsBitmap = user.flagsBitmap
-						? WplaceBitMap.fromBase64(Buffer.from(user.flagsBitmap)
-							.toString("base64"))
-						: new WplaceBitMap();
-					flagsBitmap.set(variant, true);
-					updateData.flagsBitmap = Buffer.from(flagsBitmap.toBase64(), "base64");
+				const amount = product.amount ?? 1;
+
+				// Strict validation for amount
+				if (typeof amount !== "number" ||
+					!Number.isFinite(amount) ||
+					!Number.isInteger(amount) ||
+					amount < 1) {
+					console.warn(`[${new Date()
+						.toISOString()}] Invalid purchase amount from ${req.ip}:`, amount);
+					throw new Error("Bad Request");
 				}
-				break;
-			}
 
-			await prisma.user.update({
-				where: { id: req.user!.id },
-				data: updateData
+				const totalCost = item.price * amount;
+
+				if (userRow.droplets < totalCost) {
+					throw new Error("Forbidden");
+				}
+
+				const updateData: Record<string, unknown> = {
+					["droplets"]: userRow.droplets - totalCost
+				};
+
+				switch (item.type) {
+				case "charges":
+					updateData["maxCharges"] = userRow["maxCharges"] + (5 * amount);
+					break;
+
+				case "paint": {
+					const currentCharges = calculateChargeRecharge(
+						userRow["currentCharges"],
+						userRow["maxCharges"],
+						userRow["chargesLastUpdatedAt"] || new Date(),
+						userRow["chargesCooldownMs"]
+					);
+					updateData["currentCharges"] = currentCharges + (30 * amount);
+					updateData["chargesLastUpdatedAt"] = new Date();
+					break;
+				}
+
+				case "color":
+					if (product.variant) {
+						const variant = Number(product.variant);
+						if (!Number.isInteger(variant) || variant < 32 || variant > 63) {
+							throw new Error("Bad Request");
+						}
+						const mask = 1 << (variant - 32);
+						updateData["extraColorsBitmap"] = userRow["extraColorsBitmap"] | mask;
+					}
+					break;
+
+				case "flag":
+					if (product.variant) {
+						const variant = Number(product.variant);
+						if (!Number.isInteger(variant) || variant < 1 || variant > 251) {
+							throw new Error("Bad Request");
+						}
+						const flagsBitmap = userRow["flagsBitmap"]
+							? WplaceBitMap.fromBase64(Buffer.from(userRow["flagsBitmap"])
+								.toString("base64"))
+							: new WplaceBitMap();
+						flagsBitmap.set(variant, true);
+						updateData["flagsBitmap"] = Buffer.from(flagsBitmap.toBase64(), "base64");
+					}
+					break;
+				}
+
+				await tx.user.update({
+					where: { id: req.user!.id },
+					data: updateData as any
+				});
+			}, {
+				isolationLevel: "ReadCommitted",
+				timeout: 15_000
 			});
 
 			return res.json({ success: true });

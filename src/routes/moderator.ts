@@ -122,7 +122,7 @@ export default function (app: App) {
 				}),
 				prisma.pixel.groupBy({
 					by: ["paintedBy"],
-					_count: { id: true },
+					_count: { _all: true },
 					where: { paintedBy: { in: userIds } }
 				}),
 				prisma.ticket.groupBy({
@@ -132,7 +132,7 @@ export default function (app: App) {
 				}),
 				prisma.pixel.groupBy({
 					by: ["paintedBy"],
-					_count: { id: true },
+					_count: { _all: true },
 					where: { paintedBy: { in: userIds } }
 				}),
 				prisma.user.findMany({
@@ -143,9 +143,9 @@ export default function (app: App) {
 
 			const reportedCountMap = new Map(reportedCounts.map(r => [r.reportedUserId, r._count.id]));
 			const timeoutCountMap = new Map(timeoutCounts.map(t => [t.reportedUserId, t._count.id]));
-			const pixelsCountMap = new Map(pixelsCounts.map(p => [p.paintedBy, p._count.id]));
+			const pixelsCountMap = new Map(pixelsCounts.map(p => [p.paintedBy, p._count._all]));
 			const authorReportedCountMap = new Map(authorReportedCounts.map(a => [a.userId, a._count.id]));
-			const authorPixelsCountMap = new Map(authorPixelsCounts.map(a => [a.paintedBy, a._count.id]));
+			const authorPixelsCountMap = new Map(authorPixelsCounts.map(a => [a.paintedBy, a._count._all]));
 
 			const sameIpCountMap = new Map<number, number>();
 			const allIps = new Set<string>();
@@ -588,7 +588,7 @@ export default function (app: App) {
 				}),
 				prisma.pixel.groupBy({
 					by: ["paintedBy"],
-					_count: { id: true },
+					_count: { _all: true },
 					where: { paintedBy: { in: userIds } }
 				}),
 				prisma.user.findMany({
@@ -599,7 +599,7 @@ export default function (app: App) {
 
 			const reportedCountMap = new Map(reportedCounts.map(r => [r.reportedUserId, r._count.id]));
 			const timeoutCountMap = new Map(timeoutCounts.map(t => [t.reportedUserId, t._count.id]));
-			const pixelsCountMap = new Map(pixelsCounts.map(p => [p.paintedBy, p._count.id]));
+			const pixelsCountMap = new Map(pixelsCounts.map(p => [p.paintedBy, p._count._all]));
 
 			// Same IP calculation
 			const allIps = new Set<string>();

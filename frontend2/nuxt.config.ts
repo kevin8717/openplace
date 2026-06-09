@@ -149,7 +149,7 @@ export default defineNuxtConfig({
 
 	primevue: {
 		components: {
-			include: ["Avatar", "OverlayBadge", "Menu", "Badge", "Toast", "Button", "Card", "ProgressSpinner", "InputText", "Message", "DataTable", "Column", "Tag", "InputNumber"]
+			include: ["Avatar", "OverlayBadge", "Menu", "Badge", "Toast", "Button", "Card", "ProgressSpinner", "InputText", "Message", "DataTable", "Column", "Tag", "InputNumber", "Dialog"]
 		},
 
 		options: {

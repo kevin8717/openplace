@@ -17,18 +17,6 @@ export interface UpdateUserInput {
 	discord?: string;
 }
 
-const config = {
-	maxFavoriteLocations: 15,
-	experiments: {
-		"2025-09_pawtect": {
-			variant: "disabled"
-		},
-		"2025-09_discord_linking": {
-			enabled: false
-		}
-	}
-};
-
 const usernameRegex = /^[\w-]{3,16}$/i;
 
 const usernameMatcher = new RegExpMatcher({
@@ -53,13 +41,13 @@ export class UserService {
 
 	async getUserProfile(userId: number) {
 		// Use transaction with row lock to prevent race conditions with concurrent pixel painting
-		const user = await this.prisma.$transaction(async (tx) => {
+		const [user, extraRaw] = await this.prisma.$transaction(async (tx) => {
 			const rows = await tx.$queryRaw<{
 				id: number; name: string; registrationIP: string | null; lastIP: string | null;
 				discord: string | null; discordUserId: string | null; nickname: string | null;
 				country: string; email: string | null; passwordHash: string;
 				banned: boolean; verified: boolean; suspensionReason: string | null;
-				timeoutUntil: Date; needsPhoneVerification: boolean; isCustomer: boolean;
+				timeoutUntil: Date; isCustomer: boolean;
 				role: string; pixelsPainted: number; droplets: number;
 				maxCharges: number; currentCharges: number; chargesCooldownMs: number;
 				chargesLastUpdatedAt: Date; extraColorsBitmap: number;
@@ -72,6 +60,7 @@ export class UserService {
 				lastPixelLatitude: number | null; lastPixelLongitude: number | null;
 				lastPixelPaintedAt: Date | null;
 				createdAt: Date; updatedAt: Date;
+				freeFlag: boolean; hotspotsOptOut: boolean; showDiscord: boolean; rulesRead: boolean;
 			}[]>(
 				Prisma.sql`SELECT * FROM User WHERE id = ${userId} LIMIT 1 FOR UPDATE`
 			);
@@ -96,7 +85,7 @@ export class UserService {
 				userRow.currentCharges = updatedCharges;
 			}
 
-			return tx.user.findUnique({
+			const prismaUser = await tx.user.findUnique({
 				where: { id: userId },
 				include: {
 					alliance: true,
@@ -104,31 +93,17 @@ export class UserService {
 					permissions: true
 				}
 			});
+
+			return [prismaUser, userRow] as const;
 		}, {
 			isolationLevel: "ReadCommitted",
-			timeout: 10_000
+			timeout: 30_000
 		});
 
 		if (!user) throw new Error("User not found");
 
 		const flagsBitmap = Buffer.from(user.flagsBitmap ?? [0])
 			.toString("base64");
-
-		let cooldownBoost: string | null = null;
-		switch (user.chargesCooldownMs) {
-		case ACTIVE_COOLDOWN_MS:
-			cooldownBoost = "active";
-			break;
-		case BOOSTER_COOLDOWN_MS:
-			cooldownBoost = "booster";
-			break;
-		case SPECIAL_COOLDOWN_MS:
-			cooldownBoost = "special";
-			break;
-		}
-
-
-		const userPermissions = user.permissions.map(p => p.permission);
 
 		// 查找装备的边框和装扮信息
 		let equippedFrameUrl = "";
@@ -169,26 +144,23 @@ export class UserService {
 				? { id, imageUrl: badgeMap.get(id)?.imageUrl ?? "", name: badgeMap.get(id)?.name ?? "", rarity: badgeMap.get(id)?.rarity ?? "" }
 				: null
 		);
+
+		const userPermissions = user.permissions.map(p => p.permission);
 	
 		return {
-			...config,
 			id: user.id,
 			name: user.nickname || user.name,
 			discord: user.discord ?? "",
-			discordUserId: user.discordUserId,
+			discordId: user.discordUserId,
 			country: user.country,
-			banned: user.banned,
-			verified: user.verified,
-			suspensionReason: user.suspensionReason,
 			timeoutUntil: user.timeoutUntil.toISOString(),
 			charges: {
 				cooldownMs: user.chargesCooldownMs,
 				count: user.currentCharges,
-				max: user.maxCharges,
-				boost: cooldownBoost
+				max: user.maxCharges
 			},
 			droplets: user.droplets,
-			permissions: userPermissions,
+			...userPermissions.length > 0 ? { permissions: userPermissions } : {},
 			equippedFlag: user.equippedFlag,
 			extraColorsBitmap: user.extraColorsBitmap,
 			favoriteLocations: user.favoriteLocations.map(loc => ({
@@ -201,22 +173,21 @@ export class UserService {
 			role: user.role,
 			isCustomer: user.isCustomer,
 			level: user.level,
-			needsPhoneVerification: user.needsPhoneVerification,
 			picture: user.picture ?? "",
 			pixelsPainted: user.pixelsPainted,
 			showLastPixel: user.showLastPixel,
-			allianceId: user.allianceId,
+			allianceId: user.allianceId ?? 0,
 			allianceName: user.alliance?.name ?? "",
 			allianceRole: user.allianceRole,
 			equippedBadges,
 			equippedFrameId: user.equippedFrameId,
 			equippedFrameUrl,
 			equippedNameCosmetic,
-			equippedFontId: user.equippedFontId,
-			equippedStyleId: user.equippedStyleId,
-			ownedFrames: JSON.parse(user.ownedFrames),
-			ownedFonts: JSON.parse(user.ownedFonts),
-			ownedStyles: JSON.parse(user.ownedStyles)
+			maxFavoriteLocations: user.maxFavoriteLocations,
+			freeFlag: extraRaw.freeFlag,
+			hotspotsOptOut: extraRaw.hotspotsOptOut,
+			showDiscord: extraRaw.showDiscord,
+			rulesRead: extraRaw.rulesRead
 		};
 	}
 

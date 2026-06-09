@@ -1,0 +1,4 @@
+Contact: mailto:contact@wplace.live
+Expires: 2026-08-24T03:00:00.000Z
+Preferred-Languages: en,pt
+Canonical: https://wplace.live/.well-known/security.txt

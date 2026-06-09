@@ -1,0 +1,30 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "live.wplace.twa",
+      "sha256_cert_fingerprints": [
+        "53:B1:74:65:76:B6:94:6D:E0:F4:46:76:87:A9:0B:58:80:00:0B:29:5D:F9:29:03:50:7A:FC:D0:BD:EA:AA:9E",
+        "C7:86:27:28:F7:F6:54:E6:D0:6B:67:AD:28:82:07:CD:68:E8:F6:67:DA:D5:9B:06:76:B1:C6:05:C6:1A:B5:32"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "live.wplace.twa.development",
+      "sha256_cert_fingerprints": [
+        "C7:86:27:28:F7:F6:54:E6:D0:6B:67:AD:28:82:07:CD:68:E8:F6:67:DA:D5:9B:06:76:B1:C6:05:C6:1A:B5:32",
+        "68:34:CB:9C:55:3D:4D:EE:C4:92:83:E1:E1:26:FA:B6:D9:EC:E5:02:81:C1:4D:6F:9E:86:59:58:1E:03:B2:71",
+        "53:B1:74:65:76:B6:94:6D:E0:F4:46:76:87:A9:0B:58:80:00:0B:29:5D:F9:29:03:50:7A:FC:D0:BD:EA:AA:9E",
+        "B9:F0:E1:7C:55:16:5D:7D:35:BE:87:20:27:59:F6:6B:DC:C2:34:6B:9F:AE:AF:36:9A:ED:91:40:A9:AC:40:0C"
+      ]
+    }
+  }
+]

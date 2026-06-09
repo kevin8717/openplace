@@ -6,6 +6,7 @@ import multer from "multer";
 import { validateSeason, validateTileCoordinates } from "../validators/common.js";
 
 import { createErrorResponse, HTTP_STATUS } from "../utils/response.js";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../config/database.js";
 import { UserService } from "../services/user.js";
 import { PixelService } from "../services/pixel.js";
@@ -19,6 +20,14 @@ import { COLOR_PALETTE } from "../utils/colors.js";
 
 const userService = new UserService(prisma);
 const pixelService = new PixelService(prisma);
+
+/** 检查用户是否拥有指定权限 */
+async function hasPermission(userId: number, permission: string): Promise<boolean> {
+	const row = await prisma.userPermission.findUnique({
+		where: { userId_permission: { userId, permission } }
+	});
+	return row !== null;
+}
 
 const upload = multer({
 	storage: multer.memoryStorage(),
@@ -130,7 +139,8 @@ export default function (app: App) {
 				select: {
 					x: true,
 					y: true,
-					paintedBy: true
+					paintedBy: true,
+					colorId: true
 				},
 				orderBy: [
 					{ y: "asc" },
@@ -138,18 +148,16 @@ export default function (app: App) {
 				]
 			});
 
-			// 创建Uint32Array来存储用户ID，初始化为0
-			const userIds = new Uint32Array(width * height);
-
-			// 填充存在的像素数据
+			// 前端期望: 每个像素 5 bytes = Uint32LE(userId) + Uint8(colorId)
+			// 无数据像素用 userId=0, colorId=0 填充
+			const buf = Buffer.alloc(width * height * 5);
 			for (const pixel of pixels) {
-				const index = (pixel.y - minY) * width + (pixel.x - minX);
-				userIds[index] = pixel.paintedBy;
+				const index = ((pixel.y - minY) * width + (pixel.x - minX)) * 5;
+				buf.writeUInt32LE(pixel.paintedBy, index);
+				buf[index + 4] = pixel.colorId;
 			}
 
-			// 返回 arraybuffer 格式的用户ID列表
-			const buffer = Buffer.from(userIds.buffer);
-			return res.send(buffer);
+			return res.send(buf);
 
 		} catch (error) {
 			console.error("Error generating tile image:", error);
@@ -376,10 +384,13 @@ export default function (app: App) {
 					.json(createErrorResponse("Invalid tile coordinates", HTTP_STATUS.BAD_REQUEST));
 			}
 
-			// 验证请求体
-			const { colors, coords, fp } = req.body as { colors?: number[]; coords?: number[]; fp?: string };
+			// 验证请求体（前端用 csid 作为 fingerprint 字段名）
+			const body = req.body as Record<string, unknown>;
+			const colors = body["colors"] as number[] | undefined;
+			const coords = body["coords"] as number[] | undefined;
+			const csid = body["csid"] as string | undefined;
 
-			if (!Array.isArray(colors) || !Array.isArray(coords) || typeof fp !== "string") {
+			if (!Array.isArray(colors) || !Array.isArray(coords) || typeof csid !== "string") {
 				return res.status(HTTP_STATUS.BAD_REQUEST)
 					.json(createErrorResponse("Invalid request body", HTTP_STATUS.BAD_REQUEST));
 			}
@@ -743,12 +754,13 @@ export default function (app: App) {
 	 */
 	app.post("/staff/tools/auto-painter/paint", authMiddleware, useMulterSingle("bitmap"), async (req: AuthenticatedRequest, res) => {
 		try {
-			// 验证用户权限
-			const userRow = await userService.getUserProfile(req.user!.id)
-				.catch(() => null);
-			if (!userRow || (userRow.role !== "admin")) {
+			// ── 权限校验 ──
+			const uid = req.user!.id;
+
+			// 基础权限：必须拥有 paint
+			if (!await hasPermission(uid, "staff.tools.auto_painter.paint")) {
 				return res.status(HTTP_STATUS.FORBIDDEN)
-					.json(createErrorResponse("Access denied. Admin privileges required.", HTTP_STATUS.FORBIDDEN));
+					.json(createErrorResponse("Missing permission: staff.tools.auto_painter.paint", HTTP_STATUS.FORBIDDEN));
 			}
 
 			if (!req.file) {
@@ -783,9 +795,18 @@ export default function (app: App) {
 					.json(createErrorResponse("Invalid numeric parameters", HTTP_STATUS.BAD_REQUEST));
 			}
 
-			if (width <= 0 || height <= 0 || width > 5000 || height > 5000) {
+			// as_user：以其他用户身份绘制
+			if (targetUserId !== uid && !await hasPermission(uid, "staff.tools.auto_painter.as_user")) {
+				return res.status(HTTP_STATUS.FORBIDDEN)
+					.json(createErrorResponse("Missing permission: staff.tools.auto_painter.as_user", HTTP_STATUS.FORBIDDEN));
+			}
+
+			// no_size_limit：取消尺寸限制
+			const SIZE_LIMIT = 5000;
+			const needsSizeLimit = width > SIZE_LIMIT || height > SIZE_LIMIT;
+			if (needsSizeLimit && !await hasPermission(uid, "staff.tools.auto_painter.no_size_limit")) {
 				return res.status(HTTP_STATUS.BAD_REQUEST)
-					.json(createErrorResponse("Invalid bitmap dimensions (max 5000x5000)", HTTP_STATUS.BAD_REQUEST));
+					.json(createErrorResponse(`Bitmap dimensions exceed limit (max ${SIZE_LIMIT}x${SIZE_LIMIT}). Requires staff.tools.auto_painter.no_size_limit`, HTTP_STATUS.BAD_REQUEST));
 			}
 
 			// 调用 pixelService 执行自动绘制
@@ -816,4 +837,672 @@ export default function (app: App) {
 		}
 	});
 
+	// ── Reverse / 还原系统 ──
+	//
+	// ── Reverse (Select-Area) ──
+	//
+	// 工具流程：
+	//   1. 版主选择区域 → 前端生成二进制选区描述符（tile 坐标 + pixel mask）
+	//   2. POST reverse/session → 解码选区描述符，存储到内存 → 返回 sessionId
+	//   3. POST reverse/timestamps → 从 PixelHistory 查该区域历史 paintedAt 时间轴
+	//   4. POST reverse/preview → 查 PixelHistory 在指定时刻的像素快照
+	//   5. POST reverse/apply → 将指定时刻的状态写回 Pixel 表（恢复）
+	//
+	// 依赖：PixelHistory 表在 paintPixels/adminAutoPaint 中同步写入
+	//
+	// 二进制选区描述符格式（匹配前端 sl() 函数）：
+	//   [0]: version (uint8) = 1
+	//   [1-2]: season (uint16 LE)
+	//   [3-6]: tiles1 count (uint32 LE) — 选区 tile 数
+	//   每个 tile: tileX(4B) tileY(4B) minPixelX(2B) minPixelY(2B)
+	//              width(2B) height(2B) pixelCount(4B) mask(pixelCount B)
+	//   [之后]: tiles2 count (uint32 LE) — 视口 tile 数（结构与上面相同）
+	//
+	interface ReverseTileInfo {
+		tileX: number;
+		tileY: number;
+		minPixelX: number;
+		minPixelY: number;
+		width: number;
+		height: number;
+		pixelCount: number;
+		mask: Buffer;
+	}
+
+	interface ReverseSession {
+		createdAt: Date;
+		season: number;
+		tiles: ReverseTileInfo[];
+		rawData: Buffer;
+	}
+
+	const reverseSessions = new Map<string, ReverseSession>();
+
+	/** 解码二进制选区描述符 */
+function decodeReverseArea(data: Buffer): { season: number; tiles: ReverseTileInfo[] } | null {
+	try {
+		const len = data.length;
+		if (len < 7) return null;
+
+		let off = 0;
+		const version = data[off]!; off++;
+		if (version !== 1) return null;
+
+		const season = data.readUInt16LE(off); off += 2;
+		const tiles1Count = data.readUInt32LE(off); off += 4;
+
+		if (tiles1Count === 0) return null;
+
+		const tiles: ReverseTileInfo[] = [];
+		for (let i = 0; i < tiles1Count; i++) {
+			if (off + 20 > len) return null;
+			const tileX = data.readInt32LE(off); off += 4;
+			const tileY = data.readInt32LE(off); off += 4;
+			const minPixelX = data.readUInt16LE(off); off += 2;
+			const minPixelY = data.readUInt16LE(off); off += 2;
+			const width = data.readUInt16LE(off); off += 2;
+			const height = data.readUInt16LE(off); off += 2;
+			const pixelCount = data.readUInt32LE(off); off += 4;
+			// mask 是按位压缩的位图：ceil(width * height / 8) 字节
+			const maskByteLen = Math.ceil((width * height) / 8);
+			if (off + maskByteLen > len) return null;
+			const mask = Buffer.from(data.subarray(off, off + maskByteLen));
+			off += maskByteLen;
+			tiles.push({ tileX, tileY, minPixelX, minPixelY, width, height, pixelCount, mask });
+		}
+		return { season, tiles };
+	} catch (e) {
+		console.error("[decodeReverseArea] error:", e);
+		return null;
+	}
+}
+
+	app.post("/staff/tools/select-area/reverse/session", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			if (!await hasPermission(req.user!.id, "staff.tools.select_area.reverse")) {
+				return res.status(403).json({ error: "Forbidden", status: 403 });
+			}
+
+			// 用 data/end 事件收集 body（比 for await...of 更可靠）
+			const rawData = await new Promise<Buffer>((resolve, reject) => {
+				const chunks: Buffer[] = [];
+				req.on("data", (chunk: Buffer) => chunks.push(chunk));
+				req.on("end", () => resolve(Buffer.concat(chunks)));
+				req.on("error", reject);
+			});
+
+			if (rawData.length === 0) {
+				return res.status(400).json({ error: "Empty data" });
+			}
+			if (rawData.length > 10 * 1024 * 1024) {
+				return res.status(400).json({ error: "Data too large (max 10MB)" });
+			}
+
+			console.log(`[reverse/session] received ${rawData.length} bytes, first 4 hex: ${rawData.subarray(0, 4).toString("hex")}`);
+
+			const decoded = decodeReverseArea(rawData);
+			console.log(`[reverse/session] decoded tiles=${decoded?.tiles.length ?? 0}, season=${decoded?.season}`);
+			if (!decoded || decoded.tiles.length === 0) {
+				return res.status(400).json({ error: "Invalid area data format" });
+			}
+
+			// 计算选区总尺寸
+			const tileSize = 1000;
+			let minGX = Infinity, minGY = Infinity, maxGX = -Infinity, maxGY = -Infinity;
+			for (const tile of decoded.tiles) {
+				const x0 = tile.tileX * tileSize + tile.minPixelX;
+				const y0 = tile.tileY * tileSize + tile.minPixelY;
+				const x1 = x0 + tile.width - 1;
+				const y1 = y0 + tile.height - 1;
+				if (x0 < minGX) minGX = x0;
+				if (y0 < minGY) minGY = y0;
+				if (x1 > maxGX) maxGX = x1;
+				if (y1 > maxGY) maxGY = y1;
+			}
+			const areaWidth = maxGX - minGX + 1;
+			const areaHeight = maxGY - minGY + 1;
+
+			const sessionId = `rev_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+			reverseSessions.set(sessionId, {
+				createdAt: new Date(),
+				season: decoded.season,
+				tiles: decoded.tiles,
+				rawData,
+			});
+
+			return res.json({ sessionId, width: areaWidth, height: areaHeight });
+		} catch (error) {
+			console.error("Error creating reverse session:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// POST /staff/tools/select-area/reverse/timestamps
+	// body: { sessionId, mode, beforeDepth?, beforeTimestamp? }
+	// 从 PixelHistory 查询该区域所有 paintedAt 时间轴
+	// 注意：PixelHistory.x/y 是瓦片内局部坐标（0-999）
+	app.post("/staff/tools/select-area/reverse/timestamps", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			if (!await hasPermission(req.user!.id, "staff.tools.select_area.reverse")) {
+				return res.status(403).json({ error: "Forbidden", status: 403 });
+			}
+
+			const { sessionId, mode = "depth", beforeDepth, beforeTimestamp } = req.body ?? {};
+			const session = reverseSessions.get(sessionId);
+			if (!session) {
+				return res.status(404).json({ error: "Session not found" });
+			}
+			if (session.tiles.length === 0) {
+				return res.json({ timestamps: [], hasMore: false });
+			}
+
+			// 构建 WHERE — x/y 是瓦片内局部坐标，直接用 minPixelX/Y 和 width/height
+			const areaConds: string[] = [];
+			const params: number[] = [session.season];
+			for (const tile of session.tiles) {
+				const x0 = tile.minPixelX, y0 = tile.minPixelY;
+				const x1 = x0 + tile.width - 1, y1 = y0 + tile.height - 1;
+				areaConds.push(`(tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?)`);
+				params.push(tile.tileX, tile.tileY, x0, x1, y0, y1);
+			}
+			const whereClause = `season = ? AND (${areaConds.join(" OR ")})`;
+
+			// ── 分页 ──
+			// "depth" 模式: beforeDepth = 上一页最后一条的 depth 值
+			//   累计偏移 = beforeDepth + 1（跳过最后一条避免重复）
+			// "historical" 模式: beforeTimestamp = 上一页最后一条的 ts
+			//   用 paintedAt < ? 自然排除已返回的行
+			let limitOffset = "";
+			let realDepthOffset = 0;
+			if (mode === "depth" && typeof beforeDepth === "number" && beforeDepth >= 0) {
+				realDepthOffset = beforeDepth + 1;
+				limitOffset = `OFFSET ${realDepthOffset}`;
+			}
+			let timeFilter = "";
+			const timeParams: any[] = [];
+			if (mode === "historical" && beforeTimestamp) {
+				timeFilter = "AND paintedAt < ?";
+				timeParams.push(new Date(beforeTimestamp));
+			}
+
+			const limit = 51;
+			const rows = await prisma.$queryRawUnsafe<Array<{ paintedAt: Date; cnt: bigint; eventCnt: bigint }>>(
+				`SELECT paintedAt, CAST(COUNT(*) AS SIGNED) as cnt,
+				        CAST(COUNT(DISTINCT paintedBy) AS SIGNED) as eventCnt
+				 FROM PixelHistory WHERE ${whereClause} ${timeFilter}
+				 GROUP BY paintedAt ORDER BY paintedAt DESC LIMIT ${limit} ${limitOffset}`,
+				...params, ...timeParams
+			);
+
+			const hasMore = rows.length === limit;
+			const timestamps = rows.slice(0, 50).map((r, i) => ({
+				ts: r.paintedAt.getTime(),
+				depth: realDepthOffset + i,
+				pixelCount: Number(r.cnt),
+				eventCount: Number(r.eventCnt),
+			}));
+
+			return res.json({ timestamps, hasMore });
+		} catch (error) {
+			console.error("Error in reverse timestamps:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// POST /staff/tools/select-area/reverse/preview
+	// body: { sessionId, mode ("depth"|"historical"), snapshotDepth?, timestamp? }
+	// 查询指定时刻的像素快照（默认当前状态）
+	// 注意：Pixel/PixelHistory.x/y 是瓦片内局部坐标（0-999）
+	app.post("/staff/tools/select-area/reverse/preview", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			if (!await hasPermission(req.user!.id, "staff.tools.select_area.reverse")) {
+				return res.status(403).json({ error: "Forbidden", status: 403 });
+			}
+
+			const { sessionId, mode = "depth", snapshotDepth, timestamp } = req.body ?? {};
+			const session = reverseSessions.get(sessionId);
+			if (!session) {
+				return res.status(404).json({ error: "Session not found" });
+			}
+			if (session.tiles.length === 0) {
+				return res.json({ pixels: [], totalPixels: 0 });
+			}
+
+			// 确定目标时刻
+			let targetTime: Date | null = null;
+			if (mode === "historical" && timestamp) {
+				targetTime = new Date(timestamp);
+			} else if (mode === "depth" && typeof snapshotDepth === "number") {
+				// 按 depth（累计偏移量）查找对应的 paintedAt
+				const areaConds: string[] = [];
+				const tParams: number[] = [session.season];
+				for (const tile of session.tiles) {
+					const x0 = tile.minPixelX, y0 = tile.minPixelY;
+					const x1 = x0 + tile.width - 1, y1 = y0 + tile.height - 1;
+					areaConds.push(`(tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?)`);
+					tParams.push(tile.tileX, tile.tileY, x0, x1, y0, y1);
+				}
+				const tWhere = `season = ? AND (${areaConds.join(" OR ")})`;
+				const tsRows = await prisma.$queryRawUnsafe<Array<{ paintedAt: Date }>>(
+					`SELECT paintedAt FROM PixelHistory WHERE ${tWhere} GROUP BY paintedAt ORDER BY paintedAt DESC LIMIT 1 OFFSET ${snapshotDepth}`,
+					...tParams
+				);
+				if (tsRows.length > 0) targetTime = tsRows[0]!.paintedAt;
+			}
+
+			const results: Array<{ tileX: number; tileY: number; pixelX: number; pixelY: number; color: number }> = [];
+			const TILE_LIMIT = 100000;
+
+			for (const tile of session.tiles) {
+				const x0 = tile.minPixelX, y0 = tile.minPixelY;
+				const x1 = x0 + tile.width - 1, y1 = y0 + tile.height - 1;
+
+				// 查询像素状态
+				const pixelMap = new Map<string, number>(); // key="localX,localY" → colorId
+
+				if (targetTime) {
+					const rows = await prisma.$queryRawUnsafe<Array<{ x: number; y: number; colorId: number }>>(
+						`SELECT ph.x, ph.y, ph.colorId
+						 FROM PixelHistory ph
+						 INNER JOIN (
+						   SELECT tileX, tileY, x, y, MAX(paintedAt) as maxPaintedAt
+						   FROM PixelHistory
+						   WHERE tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?
+						     AND paintedAt <= ?
+						   GROUP BY tileX, tileY, x, y
+						 ) latest ON ph.tileX = latest.tileX AND ph.tileY = latest.tileY
+						   AND ph.x = latest.x AND ph.y = latest.y
+						   AND ph.paintedAt = latest.maxPaintedAt
+						 LIMIT ${TILE_LIMIT}`,
+						tile.tileX, tile.tileY, x0, x1, y0, y1, targetTime
+					);
+					for (const r of rows) pixelMap.set(`${r.x},${r.y}`, r.colorId);
+				} else {
+					const rows = await prisma.$queryRawUnsafe<Array<{ x: number; y: number; colorId: number }>>(
+						`SELECT x, y, colorId FROM Pixel
+						 WHERE season = ? AND tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?
+						 LIMIT ${TILE_LIMIT}`,
+						session.season, tile.tileX, tile.tileY, x0, x1, y0, y1
+					);
+					for (const r of rows) pixelMap.set(`${r.x},${r.y}`, r.colorId);
+				}
+
+				// 按 mask 过滤并按前端格式输出
+				const tileW = tile.width;
+				const totalPx = tileW * tile.height;
+				for (let px = 0; px < totalPx && results.length < TILE_LIMIT; px++) {
+					const byteIdx = px >> 3;
+					const bitIdx = px & 7;
+					if (!((tile.mask[byteIdx]! >> bitIdx) & 1)) continue;
+					const lx = px % tileW;
+					const ly = Math.floor(px / tileW);
+					const localX = tile.minPixelX + lx;
+					const localY = tile.minPixelY + ly;
+					results.push({
+						tileX: tile.tileX,
+						tileY: tile.tileY,
+						pixelX: localX,
+						pixelY: localY,
+						color: pixelMap.get(`${localX},${localY}`) ?? 0,
+					});
+				}
+				if (results.length >= TILE_LIMIT) break;
+			}
+
+			return res.json({ pixels: results });
+		} catch (error) {
+			console.error("Error in reverse preview:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// POST /staff/tools/select-area/reverse/timelapse
+	// body: { sessionId, paceMode, fps, durationSeconds, maxFrameCount, beforeTimestamp }
+	//
+	// 生成画布选区的时间轴帧数据，前端解析后合成视频
+	//
+	// 二进制响应格式（匹配前端 go() 解析函数）：
+	//   [0]: version (uint8) = 1
+	//   [1-4]: frameCount (uint32 LE)
+	//   每个 frame:
+	//     [timestampLo (uint32 LE)] — 低32位
+	//     [timestampHi (int32 LE)]  — 高32位（合起来 ts = hi*2^32 + lo, ms since epoch）
+	//     [changeCount (uint32 LE)] — 本帧变更像素数
+	//     每个像素变更: tileX(int32 LE)+tileY(int32 LE)+x(uint16 LE)+y(uint16 LE)+colorId(uint8) = 13B
+	//
+	// 注意：PixelHistory.x/y 是瓦片内局部坐标（0-999）
+	//
+	app.post("/staff/tools/select-area/reverse/timelapse", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			if (!await hasPermission(req.user!.id, "staff.tools.select_area.timelapse") &&
+				!await hasPermission(req.user!.id, "staff.tools.select_area.reverse")) {
+				return res.status(403).json({ error: "Forbidden", status: 403 });
+			}
+
+			const { sessionId, maxFrameCount = 200, beforeTimestamp = 0 } = req.body ?? {};
+			const session = reverseSessions.get(sessionId);
+			if (!session) {
+				return res.status(404).json({ error: "Session not found" });
+			}
+			if (session.tiles.length === 0) {
+				return res.status(400).json({ error: "timelapse_too_many_events" });
+			}
+
+			// 构建选区 WHERE — 局部坐标
+			const areaConds: string[] = [];
+			const params: number[] = [session.season];
+			for (const tile of session.tiles) {
+				const x0 = tile.minPixelX, y0 = tile.minPixelY;
+				const x1 = x0 + tile.width - 1, y1 = y0 + tile.height - 1;
+				areaConds.push(`(tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?)`);
+				params.push(tile.tileX, tile.tileY, x0, x1, y0, y1);
+			}
+			const whereClause = `season = ? AND (${areaConds.join(" OR ")})`;
+
+			// 时间过滤
+			let timeFilter = "";
+			const timeParams: any[] = [];
+			if (beforeTimestamp > 0) {
+				timeFilter = "AND paintedAt <= ?";
+				timeParams.push(new Date(beforeTimestamp));
+			}
+
+			const frameLimit = Math.min(Math.max(maxFrameCount, 1), 500);
+
+			// 查询所有 distinct paintedAt（事件模式 = 每个 paintedAt 一帧）
+			const timestamps = await prisma.$queryRawUnsafe<Array<{ paintedAt: Date }>>(
+				`SELECT paintedAt FROM PixelHistory WHERE ${whereClause} ${timeFilter} GROUP BY paintedAt ORDER BY paintedAt ASC LIMIT ${frameLimit + 1}`,
+				...params, ...timeParams
+			);
+
+			console.log(`[reverse/timelapse] found ${timestamps.length} distinct timestamps in area`);
+			if (timestamps.length === 0) {
+				return res.status(400).json({ error: "timelapse_too_many_events" });
+			}
+
+			// 如果事件数超过 frameLimit，返回 too_many
+			if (timestamps.length > frameLimit) {
+				return res.status(400).json({ error: "timelapse_too_many_events" });
+			}
+
+			// 预计算缓冲区大小
+			// 先一次性查询所有像素变更并按 paintedAt 分组
+			const allPixelRows = await prisma.$queryRawUnsafe<Array<{
+				tileX: number; tileY: number; x: number; y: number;
+				colorId: number; paintedAt: Date;
+			}>>(
+				`SELECT tileX, tileY, x, y, colorId, paintedAt FROM PixelHistory WHERE ${whereClause} ${timeFilter} ORDER BY paintedAt ASC`,
+				...params, ...timeParams
+			);
+
+			// 按 paintedAt 分组
+			const framePixelMap = new Map<number, Array<{ tileX: number; tileY: number; x: number; y: number; colorId: number }>>();
+			for (const row of allPixelRows) {
+				const ts = row.paintedAt.getTime();
+				if (!framePixelMap.has(ts)) framePixelMap.set(ts, []);
+				framePixelMap.get(ts)!.push({ tileX: row.tileX, tileY: row.tileY, x: row.x, y: row.y, colorId: row.colorId });
+			}
+
+			// 按时间戳排序构建帧列表
+			const sortedTimestamps = [...framePixelMap.keys()].sort((a, b) => a - b).slice(0, frameLimit);
+
+			// 限总像素数，防止 OOM
+			const MAX_TOTAL_PIXELS = 2_000_000;
+			let totalPixelCount = 0;
+			for (const ts of sortedTimestamps) {
+				totalPixelCount += framePixelMap.get(ts)?.length ?? 0;
+			}
+			if (totalPixelCount > MAX_TOTAL_PIXELS) {
+				return res.status(400).json({ error: "timelapse_too_many_events" });
+			}
+
+			// 编码二进制
+			const headerSize = 5; // version(1) + frameCount(4)
+			let bufSize = headerSize;
+			for (const ts of sortedTimestamps) {
+				const pixels = framePixelMap.get(ts)!;
+				bufSize += 8 + 4 + pixels.length * 13; // timestamp(8) + changeCount(4) + pixels*13
+			}
+
+			const buf = Buffer.alloc(bufSize);
+			let offset = 0;
+			buf[offset] = 1; offset += 1; // version
+			buf.writeUInt32LE(sortedTimestamps.length, offset); offset += 4;
+
+			for (const ts of sortedTimestamps) {
+				const pixels = framePixelMap.get(ts)!;
+				// 64-bit timestamp: split into low/high 32-bit
+				const tsLow = ts >>> 0;
+				const tsHigh = Math.floor(ts / 0x100000000);
+				buf.writeUInt32LE(tsLow, offset); offset += 4;
+				buf.writeInt32LE(tsHigh, offset); offset += 4;
+				buf.writeUInt32LE(pixels.length, offset); offset += 4;
+				for (const p of pixels) {
+					buf.writeInt32LE(p.tileX, offset); offset += 4;
+					buf.writeInt32LE(p.tileY, offset); offset += 4;
+					buf.writeUInt16LE(p.x, offset); offset += 2;
+					buf.writeUInt16LE(p.y, offset); offset += 2;
+					buf[offset] = p.colorId; offset += 1;
+				}
+			}
+
+			res.setHeader("Content-Type", "application/octet-stream");
+			return res.send(buf);
+		} catch (error) {
+			console.error("Error in reverse timelapse:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// POST /staff/tools/select-area/reverse/apply
+	// body: { sessionId, mode, snapshotDepth?, timestamp? }
+	// 将指定时刻的像素快照写回 Pixel 表（恢复）
+	// 返回: { painted: number }
+	app.post("/staff/tools/select-area/reverse/apply", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			if (!await hasPermission(req.user!.id, "staff.tools.select_area.reverse")) {
+				return res.status(403).json({ error: "Forbidden", status: 403 });
+			}
+
+			const { sessionId, mode = "depth", snapshotDepth, timestamp } = req.body ?? {};
+			const session = reverseSessions.get(sessionId);
+			if (!session) {
+				return res.status(404).json({ error: "Session not found" });
+			}
+			if (session.tiles.length === 0) {
+				return res.json({ painted: 0 });
+			}
+
+			// 确定目标时刻
+			let targetTime: Date | null = null;
+			if (mode === "historical" && timestamp) {
+				targetTime = new Date(timestamp);
+			} else if (mode === "depth" && typeof snapshotDepth === "number") {
+				const areaConds: string[] = [];
+				const tParams: number[] = [session.season];
+				for (const tile of session.tiles) {
+					const x0 = tile.minPixelX, y0 = tile.minPixelY;
+					const x1 = x0 + tile.width - 1, y1 = y0 + tile.height - 1;
+					areaConds.push(`(tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?)`);
+					tParams.push(tile.tileX, tile.tileY, x0, x1, y0, y1);
+				}
+				const tWhere = `season = ? AND (${areaConds.join(" OR ")})`;
+				const tsRows = await prisma.$queryRawUnsafe<Array<{ paintedAt: Date }>>(
+					`SELECT paintedAt FROM PixelHistory WHERE ${tWhere} GROUP BY paintedAt ORDER BY paintedAt DESC LIMIT 1 OFFSET ${snapshotDepth}`,
+					...tParams
+				);
+				if (tsRows.length > 0) targetTime = tsRows[0]!.paintedAt;
+			}
+
+			const paintedAt = new Date();
+			const TILE_LIMIT = 1000000;
+			let totalPainted = 0;
+
+			for (const tile of session.tiles) {
+				const x0 = tile.minPixelX, y0 = tile.minPixelY;
+				const x1 = x0 + tile.width - 1, y1 = y0 + tile.height - 1;
+
+				// 查询该时刻的像素状态（含原始绘画人）
+				const dbRows = targetTime
+					? await prisma.$queryRawUnsafe<Array<{ x: number; y: number; colorId: number; paintedBy: number }>>(
+							`SELECT ph.x, ph.y, ph.colorId, ph.paintedBy
+							 FROM PixelHistory ph
+							 INNER JOIN (
+							   SELECT tileX, tileY, x, y, MAX(paintedAt) as maxPaintedAt
+							   FROM PixelHistory
+							   WHERE tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?
+							     AND paintedAt <= ?
+							   GROUP BY tileX, tileY, x, y
+							 ) latest ON ph.tileX = latest.tileX AND ph.tileY = latest.tileY
+							   AND ph.x = latest.x AND ph.y = latest.y
+							   AND ph.paintedAt = latest.maxPaintedAt
+							 LIMIT ${TILE_LIMIT}`,
+							tile.tileX, tile.tileY, x0, x1, y0, y1, targetTime
+						)
+					: await prisma.$queryRawUnsafe<Array<{ x: number; y: number; colorId: number; paintedBy: number }>>(
+							`SELECT x, y, colorId, paintedBy FROM Pixel
+							 WHERE season = ? AND tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?
+							 LIMIT ${TILE_LIMIT}`,
+							session.season, tile.tileX, tile.tileY, x0, x1, y0, y1
+						);
+
+				// key="x,y" → { colorId, paintedBy } at targetTime
+				const snapshotMap = new Map<string, { colorId: number; paintedBy: number }>();
+				for (const r of dbRows) snapshotMap.set(`${r.x},${r.y}`, { colorId: r.colorId, paintedBy: r.paintedBy });
+
+				// 查询该 tile 中哪些位置有 PixelHistory 记录（不管时间）
+				const anyHistory = new Set<string>();
+				if (targetTime) {
+					const histRows = await prisma.$queryRawUnsafe<Array<{ x: number; y: number }>>(
+						`SELECT DISTINCT x, y FROM PixelHistory
+						 WHERE tileX = ? AND tileY = ? AND x >= ? AND x <= ? AND y >= ? AND y <= ?
+						 LIMIT 500000`,
+						tile.tileX, tile.tileY, x0, x1, y0, y1
+					);
+					for (const r of histRows) anyHistory.add(`${r.x},${r.y}`);
+				}
+
+				const pixelValues: any[] = [];
+				const deleteKeys: string[] = [];  // 需要删除的位置（目标时刻之后才画的）
+				const historyValues: any[] = [];
+				const tileW = tile.width;
+				const totalPx = tileW * tile.height;
+
+				for (let px = 0; px < totalPx; px++) {
+					const byteIdx = px >> 3;
+					const bitIdx = px & 7;
+					if (!((tile.mask[byteIdx]! >> bitIdx) & 1)) continue;
+					const lx = px % tileW;
+					const ly = Math.floor(px / tileW);
+					const localX = tile.minPixelX + lx;
+					const localY = tile.minPixelY + ly;
+					const key = `${localX},${localY}`;
+
+					if (snapshotMap.has(key)) {
+						// 该位置在目标时刻有数据 → 恢复颜色 + 原始绘画人
+						const rec = snapshotMap.get(key)!;
+						pixelValues.push(Prisma.sql`(${session.season}, ${tile.tileX}, ${tile.tileY}, ${localX}, ${localY}, ${rec.colorId}, ${rec.paintedBy}, ${paintedAt})`);
+						historyValues.push(Prisma.sql`(${session.season}, ${tile.tileX}, ${tile.tileY}, ${localX}, ${localY}, ${rec.colorId}, ${rec.paintedBy}, ${paintedAt})`);
+					} else if (anyHistory.has(key) && targetTime) {
+						// 该位置有 PixelHistory 记录但都在目标时刻之后 → 当时还不存在 → DELETE 掉
+						deleteKeys.push(`(${session.season},${tile.tileX},${tile.tileY},${localX},${localY})`);
+					}
+					// 从未在 PixelHistory 出现的旧数据 → 不动
+				}
+
+				// 执行 DELETE 清除（批量）
+				if (deleteKeys.length > 0) {
+					const DB_BATCH = 500;
+					for (let i = 0; i < deleteKeys.length; i += DB_BATCH) {
+						const batch = deleteKeys.slice(i, i + DB_BATCH);
+						await prisma.$executeRawUnsafe(
+							`DELETE FROM Pixel WHERE (season, tileX, tileY, x, y) IN (${batch.join(",")})`
+						);
+					}
+				}
+
+				if (pixelValues.length === 0) continue;
+
+				// 确保 Tile 行存在
+				await prisma.$executeRaw(Prisma.sql`INSERT IGNORE INTO Tile (season, x, y) VALUES (${session.season}, ${tile.tileX}, ${tile.tileY})`);
+
+				// 分批写入 Pixel 表
+				const DB_BATCH = 500;
+				for (let i = 0; i < pixelValues.length; i += DB_BATCH) {
+					const batch = pixelValues.slice(i, i + DB_BATCH);
+					await prisma.$executeRaw`
+						INSERT INTO Pixel (season, tileX, tileY, x, y, colorId, paintedBy, paintedAt)
+						VALUES ${Prisma.join(batch)}
+						ON DUPLICATE KEY UPDATE
+							colorId = VALUES(colorId), paintedBy = VALUES(paintedBy), paintedAt = VALUES(paintedAt)
+					`;
+				}
+
+				// 写入 PixelHistory
+				for (let i = 0; i < historyValues.length; i += DB_BATCH) {
+					const batch = historyValues.slice(i, i + DB_BATCH);
+					await prisma.$executeRaw`
+						INSERT INTO PixelHistory (season, tileX, tileY, x, y, colorId, paintedBy, paintedAt)
+						VALUES ${Prisma.join(batch)}
+					`;
+				}
+
+				totalPainted += pixelValues.length;
+			}
+
+			// 清除受影响瓦片的缓存，强制重建
+			const seenTiles = new Set<string>();
+			for (const tile of session.tiles) {
+				const key = `${tile.tileX},${tile.tileY}`;
+				if (seenTiles.has(key)) continue;
+				seenTiles.add(key);
+				await pixelService.forceRebuildTile(tile.tileX, tile.tileY, session.season)
+					.catch(e => console.error(`Failed to rebuild tile ${key}:`, e));
+			}
+
+			return res.json({ painted: totalPainted });
+		} catch (error) {
+			console.error("Error in reverse apply:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// ── Phone Verification ──
+	// POST /staff/tools/select-area/phone-verification
+	// body: { userIds: number[], notes?: string }
+	app.post("/staff/tools/select-area/phone-verification", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			if (!await hasPermission(req.user!.id, "staff.tools.select_area.phone_verification")) {
+				return res.status(403).json({ error: "Forbidden", status: 403 });
+			}
+
+			const { userIds, notes } = req.body ?? {};
+			if (!Array.isArray(userIds) || userIds.length === 0) {
+				return res.status(400).json({ error: "Invalid or empty userIds" });
+			}
+
+			// 设置挑战标记，下次绘画时触发
+			for (const uid of userIds) {
+				await prisma.userChallenge.upsert({
+					where: { userId: uid },
+					create: { userId: uid, needsChallenge: true, challengeTier: 4 },
+					update: { needsChallenge: true, challengeTier: 4 }
+				});
+			}
+
+			// 记录操作日志
+			await prisma.userNote.createMany({
+				data: userIds.map((uid: number) => ({
+					userId: uid,
+					reportedUserId: uid,
+					content: `Phone verification required by staff #${req.user!.id}${notes ? `: ${notes}` : ""}`
+				}))
+			});
+
+			return res.json({ success: true, affected: userIds.length });
+		} catch (error) {
+			console.error("Error in phone verification:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
 }

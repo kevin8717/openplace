@@ -111,7 +111,7 @@ export default function (app: App) {
 					alliance_id: user.allianceId,
 					alliance_name: alliance?.name,
 					pixels_painted: user.pixelsPainted,
-					phone_validated: !user.needsPhoneVerification,
+					phone_validated: !(await prisma.userChallenge.findUnique({ where: { userId: user.id }, select: { needsChallenge: true } }))?.needsChallenge,
 					discord: user.discord
 				});
 		} catch (error) {
@@ -447,6 +447,9 @@ export default function (app: App) {
 		const timeoutRatePct = totalCount > 0 ? (timeoutCount / totalCount) * 100 : 0;
 		const banRatePct = totalCount > 0 ? (bannedCount / totalCount) * 100 : 0;
 
+		const reportedUsers = new Set(allTicketIds.map(t => (t as any).reportedUserId).filter(Boolean));
+		const reportedUsersRatePct = totalCount > 0 ? (reportedUsers.size / totalCount) * 100 : 0;
+
 		return {
 			openCount,
 			solvedCount,
@@ -462,6 +465,7 @@ export default function (app: App) {
 			banRatePct,
 			overturnedRatePct: 0,
 			duplicatesRatePct: 0,
+			reportedUsersRatePct,
 			timeToSolve: {
 				avgMs,
 				medianMs,
@@ -1037,6 +1041,39 @@ export default function (app: App) {
 			console.error("Error deleting registration code:", error);
 			return res.status(500)
 				.json({ error: "Internal Server Error", status: 500 });
+		}
+	});
+
+	// POST /staff/dashboard/users/phone-verification
+	// body: { userIds: number[], notes?: string }
+	app.post("/staff/dashboard/users/phone-verification", authMiddleware, adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+		try {
+			const { userIds, notes } = req.body ?? {};
+			if (!Array.isArray(userIds) || userIds.length === 0) {
+				return res.status(400).json({ error: "Invalid or empty userIds" });
+			}
+
+			// upsert 确保记录存在
+			for (const uid of userIds) {
+				await prisma.userChallenge.upsert({
+					where: { userId: uid },
+					create: { userId: uid, needsChallenge: true, challengeTier: 4 },
+					update: { needsChallenge: true, challengeTier: 4 }
+				});
+			}
+
+			await prisma.userNote.createMany({
+				data: userIds.map((uid: number) => ({
+					userId: uid,
+					reportedUserId: uid,
+					content: `Phone verification required by staff #${req.user!.id}${notes ? `: ${notes}` : ""}`
+				}))
+			});
+
+			return res.json({ affected: userIds.length });
+		} catch (error) {
+			console.error("Error in dashboard phone verification:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
 		}
 	});
 }

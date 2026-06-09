@@ -23,39 +23,30 @@ const mockSessions = new Map<string, {
 	createdAt: Date;
 }>();
 
-// HTML 表单以 application/x-www-form-urlencoded 提交，需要手动解析 body
-function parseUrlencodedBody(req: any): Promise<Record<string, string>> {
-	return new Promise((resolve, reject) => {
-		let body = "";
-		req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
-		req.on("end", () => {
-			const params: Record<string, string> = {};
-			for (const [key, val] of new URLSearchParams(body)) {
-				params[key] = val;
-			}
-			resolve(params);
-		});
-		req.on("error", reject);
-	});
-}
-
 export default function (app: App) {
-	// 前端使用 <form action="/payment/create-checkout-session"> 提交，
-	// 携带 hidden input: lookup_key (e.g. "droplets_5")
-	// 正常流程：创建 Checkout Session → 跳转第三方支付 → 支付成功回调
-	// 当前模拟：创建 mock session → 跳转模拟支付页面
+
+	// 前端 <CiRk4_t8.js> 调用 je.createEmbeddedCheckout(lookupKey) ：
+	//   POST /payment/create-checkout-session
+	//   JSON body: { lookup_key: "droplets_5" }
+	//   期望 JSON 响应: { clientSecret, sessionId }
+	//
+	// 模拟 Stripe Embedded Checkout Session 创建
 	app.post("/payment/create-checkout-session", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
 		try {
-			const formData = await parseUrlencodedBody(req);
-			const lookupKey = formData["lookup_key"] ?? "";
-			const product = DROPLET_PRODUCTS[lookupKey];
-
-			if (!product) {
-				return res.redirect(`/?payment=error&reason=unknown_product`);
+			const { lookup_key: lookupKey } = req.body ?? {};
+			if (!lookupKey || typeof lookupKey !== "string") {
+				return res.status(400).json({ error: "Missing or invalid lookup_key" });
 			}
 
-			// 创建模拟 session
-			const sessionId = `mock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+			const product = DROPLET_PRODUCTS[lookupKey];
+			if (!product) {
+				return res.status(400).json({ error: "Unknown product", lookupKey });
+			}
+
+			// 生成模拟的 Stripe session
+			const sessionId = `cs_live_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+			const clientSecret = `${sessionId}_secret_${Math.random().toString(36).slice(2, 16)}`;
+
 			mockSessions.set(sessionId, {
 				userId: req.user!.id,
 				lookupKey,
@@ -64,13 +55,10 @@ export default function (app: App) {
 				createdAt: new Date(),
 			});
 
-			const total = product.droplets + product.bonus;
-
-			// 跳转到模拟支付页面
-			return res.redirect(`/payment/mock.html?session_id=${sessionId}&lookup_key=${lookupKey}&droplets=${total}`);
+			return res.json({ clientSecret, sessionId });
 		} catch (error) {
-			console.error("Payment error:", error);
-			return res.redirect("/?payment=error");
+			console.error("Payment create-checkout-session error:", error);
+			return res.status(500).json({ error: "Internal server error" });
 		}
 	});
 
@@ -94,45 +82,8 @@ export default function (app: App) {
 			// 标记已支付（先于数据库操作，防止并发重复处理）
 			session.paid = true;
 
-			// 执行支付逻辑：添加 droplets 并记录
-			// 使用 SELECT FOR UPDATE 锁定用户行 + 重试机制处理并发冲突
-			let retries = 3;
-			while (retries > 0) {
-				try {
-					await prisma.$transaction(async (tx) => {
-						// 锁定用户行防止并发更新冲突
-						const rows = await tx.$queryRaw<{ id: number }[]>(
-							Prisma.sql`SELECT id FROM User WHERE id = ${session.userId} FOR UPDATE`
-						);
-						if (rows.length === 0) return;
-
-						await tx.user.update({
-							where: { id: session.userId },
-							data: { droplets: { increment: session.product.droplets + session.product.bonus } }
-						});
-						await tx.userNote.create({
-							data: {
-								userId: session.userId,
-								reportedUserId: session.userId,
-								content: `Payment (mock): ${session.lookupKey} — +${session.product.droplets + session.product.bonus} droplets`
-							}
-						});
-					}, {
-						isolationLevel: "ReadCommitted"
-					});
-					break; // 成功，退出重试循环
-				} catch (error: any) {
-					retries--;
-					if (retries > 0 && (
-						error.message?.includes("Record has changed since last read") ||
-						error.code === "P2034"
-					)) {
-						await new Promise(r => setTimeout(r, 100));
-						continue;
-					}
-					throw error; // 非重试错误或重试用完，向上抛
-				}
-			}
+			// 执行支付逻辑
+			await processPayment(session);
 
 			const total = session.product.droplets + session.product.bonus;
 			return res.json({ redirect: `/payment/success?droplets=${total}&session_id=${session_id}` });
@@ -142,8 +93,47 @@ export default function (app: App) {
 		}
 	});
 
-	// 前端 /payment/success 页面加载时，如果 URL 包含 session_id 参数则调用此端点
-	// 用于确认 Checkout Session 已支付并刷新用户数据
+	// 模拟执行支付（添加 droplets 到用户账户）
+	async function processPayment(session: NonNullable<typeof mockSessions extends Map<string, infer V> ? V : never>): Promise<void> {
+		let retries = 3;
+		while (retries > 0) {
+			try {
+				await prisma.$transaction(async (tx) => {
+					const rows = await tx.$queryRaw<{ id: number }[]>(
+						Prisma.sql`SELECT id FROM User WHERE id = ${session.userId} FOR UPDATE`
+					);
+					if (rows.length === 0) return;
+
+					await tx.user.update({
+						where: { id: session.userId },
+						data: { droplets: { increment: session.product.droplets + session.product.bonus } }
+					});
+					await tx.userNote.create({
+						data: {
+							userId: session.userId,
+							reportedUserId: session.userId,
+							content: `Payment (simulated): ${session.lookupKey} — +${session.product.droplets + session.product.bonus} droplets`
+						}
+					});
+				}, { isolationLevel: "ReadCommitted" });
+				return;
+			} catch (error: any) {
+				retries--;
+				if (retries > 0 && (
+					error.message?.includes("Record has changed since last read") ||
+					error.code === "P2034"
+				)) {
+					await new Promise(r => setTimeout(r, 100));
+					continue;
+				}
+				throw error;
+			}
+		}
+	}
+
+	// 前端 Stripe Embedded Checkout 支付完成后调用：
+	//   POST /payment/refresh-session/:sessionId
+	//   模拟确认支付并添加 droplets
 	app.post("/payment/refresh-session/:sessionId", authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
 		try {
 			const { sessionId } = req.params;
@@ -152,17 +142,19 @@ export default function (app: App) {
 				return res.status(400).json({ error: "Missing session_id" });
 			}
 
-			// 检查模拟 session 状态
 			const session = mockSessions.get(sessionId);
 			if (!session) {
-				// session 不存在或已过期，但可能已通过其他方式处理过
-				// 返回 200 让前端继续
 				return res.status(200).json({ ok: true, note: "session not found, may have expired" });
+			}
+
+			if (!session.paid) {
+				session.paid = true;
+				await processPayment(session);
 			}
 
 			return res.status(200).json({
 				ok: true,
-				paid: session.paid,
+				paid: true,
 				lookupKey: session.lookupKey,
 			});
 		} catch (error) {

@@ -4,7 +4,6 @@ applyTo: "./**"
 
 # 前端 JS 逆向分析指南
 
-## Nuxt (frontend2) 新增页面/功能开发指南
 
 ### 新增页面步骤
 1. 在 `frontend2/app/pages/` 下创建 `.vue` 文件（Nuxt 自动注册路由）
@@ -506,3 +505,182 @@ function parseUrlencodedBody(req: any): Promise<Record<string, string>> {
 - 用户购买记录推荐使用 `prisma.$transaction` 保证原子性。
 - Frame 的 `imageUrl` 用 `VARCHAR(191)` 足够存路径，不需要 `@db.Text`。
 
+
+### 16. 支付流程重构（Stripe Embedded Checkout 模拟）
+
+**背景：** 前端 `CiRk4_t8.js` 中，水滴购买走 Stripe Embedded Checkout（内嵌式 Stripe 支付表单），但后端之前仅支持 HTML 表单跳转 Mock 页面，两者协议不匹配导致接口失效。
+
+#### 16.1 前端支付流程（重构后）
+
+```
+用户点击购买 → H({ droplets, bonus, stripeLookupkey })
+  → POST /payment/create-checkout-session    (JSON body: { lookup_key })
+  ← 200 { clientSecret, sessionId }
+  → r = "checkout" → 渲染 vi 组件
+  → vi onMount: 直接调 onComplete (ee)       ← 跳过 Stripe！
+  → ee():
+     → POST /payment/refresh-session/:sessionId
+     → 后端添加 droplets + userNote
+     → fe.refresh() 刷新用户数据
+     → 关闭 checkout 弹窗 → 弹出购买成功对话框
+```
+
+#### 16.2 后端变更（`src/routes/payment.ts`）
+
+| 变更 | 说明 |
+|---|---|
+| Body 解析 | 从 `parseUrlencodedBody` 改为全局 `milliparsec` JSON 中间件 |
+| 请求格式 | 从 `application/x-www-form-urlencoded` 改为 `application/json` |
+| 响应 | 从 `302 重定向` 改为 `200 JSON { clientSecret, sessionId }` |
+| 支付确认 | `refresh-session` 端点现在实际执行 `processPayment()`（加 droplets） |
+
+#### 16.3 前端变更（`frontend/_app/immutable/chunks/CiRk4_t8.js`）
+
+`vi` 组件跳过 `Stripe.initEmbeddedCheckout`，改为挂载时直接调用 `onComplete` 回调。
+
+### 17. `/me` 接口响应结构对齐
+
+**背景：** 根据 `me.md`（前端期望结构）和實際抓包得到的 `me.json`，后端 `/me` 响应存在字段名不匹配、字段缺失、多余字段等问题。
+
+#### 17.1 字段变更
+
+| 字段 | 变更前 | 变更后 |
+|---|---|---|
+| `discordUserId` | 原样返回 | → **`discordId`** |
+| `allianceId` | `null`（无联盟） | → **`0`**（无联盟） |
+| `charges.boost` | 返回 | → **移除** |
+| `permissions` | 始终返回 | → **仅在非空时返回**（`...userPermissions.length > 0 ? { permissions } : {}`） |
+| `banned`, `verified`, `suspensionReason` | 返回 | → **移除** |
+| `needsPhoneVerification` | 返回 | → **移除** |
+| `equippedFontId`, `equippedStyleId` | 返回 | → **移除** |
+| `ownedFrames`, `ownedFonts`, `ownedStyles` | 返回 | → **移除** |
+| `maxFavoriteLocations` | 硬编码 15 | → **使用数据库实际值** |
+| `freeFlag`, `hotspotsOptOut`, `showDiscord`, `rulesRead` | ❌ 缺失 | → **新增，从数据库读取** |
+
+#### 17.2 新增数据库字段
+
+| 字段 | 类型 | 默认值 |
+|---|---|---|
+| `freeFlag` | Boolean | `false` |
+| `hotspotsOptOut` | Boolean | `false` |
+| `showDiscord` | Boolean | `true` |
+| `rulesRead` | Boolean | `false` |
+
+- Prisma Schema 已添加，migration: `20260606000000_add_user_extra_fields`
+
+#### 17.3 新增端点
+
+| 端点 | 方法 | 响应 |
+|---|---|---|
+| `/me/email` | GET | `{ "email": "..." }` |
+| `/me/pixels-painted-today` | GET | `{ "paintedToday": 0 }` |
+| `/me/suspension` | GET | `{ "active", "kind", "reason" }` |
+| `/me/rules/read` | POST | `{ "success": true }` |
+
+### 18. KPI `/staff/dashboard/kpi/tickets` 字段缺失修复
+
+**问题：** `getPeriodStats()` 返回了 `overturnedRatePct` 等字段，但缺少 `reportedUsersRatePct`。前端 `12.CYh0uttE.js` 中 `tt(n)`（`n.toFixed(1)`）因字段为 `undefined` 而崩溃。
+
+**修复：** 在 `getPeriodStats()` 中计算 `reportedUsersRatePct = (唯一举报用户数 / 总工单数) * 100`。
+
+### 19. 权限列表同步（`staff.dashboard.permissions`）
+
+**背景：** 前端 `DU-2YUMG.js` 的 `fE` 对象定义了 **85 个权限**，后端 `permission.ts` 的 `ALL_PERMISSIONS` 仅有 74 个且部分不匹配。前端保存时通过 `oe()` 函数过滤，只保留在 `available` 列表中的权限，导致丢失权限。
+
+**后端变更（`src/routes/permission.ts`）：**
+
+| 操作 | 权限 |
+|---|---|
+| **移除**（前端没有） | `staff.dashboard.ban_waves.see`, `staff.dashboard.ban_waves.execute`, `staff.tools.select_pixel.archive` |
+| **重命名** | `staff.tools.wayback.wayback` → `staff.tools.wayback` |
+| **新增**（13 个） | `staff.dashboard.users.appeals_history`, `staff.dashboard.users.edit_email`, `staff.dashboard.users.phone_verification`, `staff.dashboard.users.remove_picture`, `staff.dashboard.anticheat.see`, `staff.tickets.revert`, `staff.tickets.revert_review`, `staff.tools.select_area.phone_verification`, `staff.tools.select_area.reverse`, `staff.tools.select_area.timelapse`, `staff.tools.auto_painter.transparent`, `staff.tools.auto_painter.no_charges`, `staff.tools.auto_painter.as_user`, `staff.tools.auto_painter.no_size_limit` |
+
+### 20. Anticheat Dashboard 分析
+
+#### 20.1 路由
+
+| 路径 | 组件 |
+|---|---|
+| `/dashboard/anticheat` | Node 9 (`9.qY48VnnM.js`), layout [2] |
+| 权限 | `staff.dashboard.anticheat.see` |
+
+#### 20.2 API 端点
+
+| 端点 | 方法 | 参数 | 前端 Store | 用途 |
+|---|---|---|---|---|
+| `/staff/dashboard/anticheat/stats` | GET | `from, to` | `Pt` | 统计概览 |
+| `/staff/dashboard/anticheat/signals` | GET | `from, to` | `Jt` | 信号时间线 |
+| `/staff/dashboard/anticheat/user/:userId` | GET | `from, to` | `at` | 用户旅程 |
+
+#### 20.3 `/stats` 响应字段
+
+| 字段 | 类型 | 用途 |
+|---|---|---|
+| `challengeTimeline` | `{ hour, tier, count }[]` | 按小时 + tier 聚合的挑战数量折线 |
+| `challengeTimelineByCategory` | `{ hour, tier, category, count }[]` | 有 category 过滤时的折线 |
+| `signalBreakdown` | `{ signal, users }[]` | 每个信号名对应的独立用户数 |
+| `isolatedSignals` | `{ signal, tier, users, challenges }[]` | 单信号触发的挑战 |
+| `triggeredByTier` | `{ tier, total, solved, uniqueUsers, topSignals[] }[]` | 各 tier 汇总 |
+| `usersWithChallenges` | `number` | 有挑战记录的总用户数 |
+
+#### 20.4 `/signals` 响应字段
+
+| 字段 | 类型 | 用途 |
+|---|---|---|
+| `timeline` | `{ hour, category, count }[]` | 按小时 + category 聚合的信号数柱状图 |
+| `topSignals` | `{ type, count }[]` | Top signals 数据源 |
+| `paintRequests` | `{ total, automated, uniquePainters }` | 绘制请求漏斗统计 |
+
+#### 20.5 `/user/:id` 响应字段
+
+| 字段 | 类型 | 用途 |
+|---|---|---|
+| `recentSignals` | `{ type, count }[]` | 用户最近信号 |
+| `signalSummary` | `{ type, count }[]` | 用户信号汇总 |
+| `signalTimeline` | `{ hour, category, count }[]` | 用户信号时间线 |
+| `challenges` | `{ tier, ... }[]` | 用户挑战历史 |
+
+#### 20.6 Signal Category 分类规则
+
+| 信号名前缀 | Category |
+|---|---|
+| `behavioral_*` | Behavioral |
+| `device_*` | Device |
+| `network_*` | Network |
+| `pawtect_*` | Pawtect |
+| `captcha_*` | Captcha |
+| `wasm_telemetry_*` | WASM |
+| `ip_*` / `session_*` / `fingerprint_*` | Historical |
+| `reported_*` / `alliance_reported_*` | Reports |
+| 其他 | Other |
+
+#### 20.7 Challenge Tier 等级
+
+| Tier | 类型 |
+|---|---|
+| 1 | PoW（工作量证明） |
+| 2 | Turnstile（Cloudflare) |
+| 3 | hCaptcha |
+| 4 | OTP（短信验证） |
+
+#### 20.8 数据来源
+
+| 表 | 数据库 | 用途 |
+|---|---|---|
+| `paint_requests` | ClickHouse | 每次绘画请求日志 |
+| `anticheat_signals` | ClickHouse | 反作弊检测信号流 |
+| `anticheat_challenges` | PostgreSQL | 挑战记录（含 signals 数组） |
+
+**注意：** 以上表未在 Prisma Schema 中建模，数据由独立的反作弊服务写入。当前 `anticheat.ts` 端点返回空数据桩。
+
+#### 20.9 前端采集文件
+
+| 文件 | 作用 |
+|---|---|
+| `DU-2YUMG.js` | 反作弊客户端 SDK（Pawtect WASM 加载、FingerprintJS、PoW、OTP） |
+| `pawtect_wasm_bg.wasm` | Rust WASM 签名模块，生成 `x-pawtect-token` |
+| `yew7vgrr.js` | FingerprintJS Pro 集成 |
+| `docs/protocol.md` | 反作弊设计文档 |
+
+
+## Nuxt (frontend2) 新增页面/功能开发指南

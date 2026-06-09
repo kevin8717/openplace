@@ -23,7 +23,6 @@ model User {
   verified               Boolean                @default(false)
   suspensionReason       String?
   timeoutUntil           DateTime               @default(now())
-  needsPhoneVerification Boolean                @default(false)
   isCustomer             Boolean                @default(false)
   role                   String                 @default("user")
   pixelsPainted          Int                    @default(0)
@@ -49,11 +48,14 @@ model User {
   ownedStyles            String                 @default("[]")
   picture                String?                @db.Text
   level                  Float                  @default(1)
+  freeFlag               Boolean                @default(false)
+  hotspotsOptOut         Boolean                @default(false)
+  showDiscord            Boolean                @default(true)
+  rulesRead              Boolean                @default(false)
   allianceId             Int?
   allianceRole           String                 @default("member")
   allianceJoinedAt       DateTime?
   alliance               Alliance?              @relation(fields: [allianceId], references: [id])
-  paintedPixels          Pixel[]
   favoriteLocations      FavoriteLocation[]
   bannedIPs              BannedIP[]
   createdTickets         Ticket[]               @relation("TicketUser")
@@ -157,7 +159,6 @@ model Tile {
   x         Int      @db.UnsignedSmallInt
   y         Int      @db.UnsignedSmallInt
   imageData Bytes?
-  pixels    Pixel[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -165,8 +166,7 @@ model Tile {
 }
 
 model Pixel {
-  id              Int      @id @default(autoincrement())
-  season          Int      @default(0) @db.UnsignedSmallInt
+  season          Int      @db.UnsignedSmallInt
   tileX           Int      @db.UnsignedSmallInt
   tileY           Int      @db.UnsignedSmallInt
   x               Int      @db.UnsignedSmallInt
@@ -175,13 +175,39 @@ model Pixel {
   paintedBy       Int
   regionCityId    Int?
   regionCountryId Int?
-  user            User     @relation(fields: [paintedBy], references: [id])
-  tile            Tile     @relation(fields: [season, tileX, tileY], references: [season, x, y])
   paintedAt       DateTime @default(now())
 
-  @@unique([season, tileX, tileY, x, y])
-  @@index([season, tileX, tileY])
+  @@id([season, tileX, tileY, x, y])
   @@index([paintedBy, paintedAt])
+}
+
+model PixelHistory {
+  id        BigInt   @id @default(autoincrement())
+  season    Int      @db.UnsignedTinyInt
+  tileX     Int      @db.UnsignedSmallInt
+  tileY     Int      @db.UnsignedSmallInt
+  x         Int      @db.UnsignedSmallInt
+  y         Int      @db.UnsignedSmallInt
+  colorId   Int      @db.UnsignedTinyInt
+  paintedBy Int
+  paintedAt DateTime @default(now())
+
+  @@index([season, tileX, tileY, paintedAt])
+  @@index([season, tileX, tileY, x, y, paintedAt])
+  @@index([paintedBy, paintedAt])
+}
+
+model UserChallenge {
+  userId         Int      @id
+  phoneHash      String?  // SHA-256 电话哈希
+  phoneVerified  Boolean  @default(false)
+  needsChallenge Boolean  @default(false)
+  challengeTier  Int?
+  verifiedAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([phoneHash])
 }
 
 model Region {
