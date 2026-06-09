@@ -166,7 +166,7 @@ model Tile {
 }
 
 model Pixel {
-  season          Int      @db.UnsignedSmallInt
+  season          Int      @default(0) @db.UnsignedSmallInt
   tileX           Int      @db.UnsignedSmallInt
   tileY           Int      @db.UnsignedSmallInt
   x               Int      @db.UnsignedSmallInt
@@ -175,10 +175,10 @@ model Pixel {
   paintedBy       Int
   regionCityId    Int?
   regionCountryId Int?
-  paintedAt       DateTime @default(now())
+  paintedAt       DateTime @default(now()) @db.DateTime(0)
 
   @@id([season, tileX, tileY, x, y])
-  @@index([paintedBy, paintedAt])
+  @@index([paintedBy, paintedAt], map: "idx_pixel_user_time")
 }
 
 model PixelHistory {

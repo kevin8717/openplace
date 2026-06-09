@@ -81,6 +81,15 @@ export default function (app: App) {
 				await userService.setLastIP(user.id, req.ip);
 			}
 
+			// 无邮箱时不发登录 cookie，改为返回临时验证 token
+			if (!user.email) {
+				const verifyToken = jwt.sign(
+					{ userId: user.id, scope: "email-verify", iss: "openplace", exp: Math.floor(Date.now() / 1000) + 600, iat: Math.floor(Date.now() / 1000) },
+					JWT_SECRET!
+				);
+				return res.json({ success: true, needsEmail: true, verifyToken });
+			}
+
 			const session = await prisma.session.create({
 				data: {
 					userId: user.id,
@@ -104,7 +113,7 @@ export default function (app: App) {
 			rateLimiter.recordAttempt(req.ip!, true);
 			const date = new Date();
 			console.log(`[${date.toISOString()}] [${req.ip}] ${user.name}#${user.id} logged in`);
-			return res.json({ success: true, needsEmail: !user.email });
+			return res.json({ success: true });
 		} catch (error) {
 			console.error("Login error:", error);
 			return res.status(500)

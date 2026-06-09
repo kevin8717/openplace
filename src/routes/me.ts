@@ -1,13 +1,35 @@
 import { App } from "@tinyhttp/app";
 import multer from "multer";
+import jwt from "jsonwebtoken";
 import { authMiddleware } from "../middleware/auth.js";
+import { JWT_SECRET } from "../config/auth.js";
 import { handleServiceError } from "../middleware/errorHandler.js";
 import { UserService } from "../services/user.js";
+import { AuthToken } from "../services/auth.js";
 import { validateUpdateUser } from "../validators/user.js";
 import { createErrorResponse, HTTP_STATUS } from "../utils/response.js";
 import { prisma } from "../config/database.js";
-import { AuthenticatedRequest } from "../types/index.js";
+import { AuthenticatedRequest, UserRole } from "../types/index.js";
 import { sendEmailTo } from "../services/email.js";
+
+// 邮箱验证中间件：接受 verifyToken（无 cookie 时的临时凭证）
+const emailVerifyAuth = async (req: AuthenticatedRequest, res: any, next: any) => {
+	try {
+		const token = req.headers["x-verify-token"] as string;
+		if (!token) {
+			// 退回到普通 authMiddleware
+			return authMiddleware(req, res, next);
+		}
+		const decoded = jwt.verify(token, JWT_SECRET!) as any;
+		if (decoded.scope !== "email-verify") {
+			return res.status(401).json({ error: "Invalid token scope" });
+		}
+		req.user = { id: decoded.userId, sessionId: "" };
+		next?.();
+	} catch {
+		return res.status(401).json({ error: "Invalid or expired verify token" });
+	}
+};
 
 	// 邮箱验证码存储（生产环境应改用 Redis）
 const emailVerificationCodes = new Map<number, { email: string; code: string; expiresAt: number }>();
@@ -459,7 +481,7 @@ export default function (app: App) {
 	});
 
 	// POST /me/email — 设置/更新邮箱
-	app.post("/me/email", authMiddleware, async (req: AuthenticatedRequest, res) => {
+	app.post("/me/email", emailVerifyAuth, async (req: AuthenticatedRequest, res) => {
 		try {
 			const { email } = req.body;
 			if (!email || typeof email !== "string") {
@@ -493,7 +515,7 @@ export default function (app: App) {
 	});
 
 	// POST /me/email/send-code — 发送邮箱验证码
-	app.post("/me/email/send-code", authMiddleware, async (req: AuthenticatedRequest, res) => {
+	app.post("/me/email/send-code", emailVerifyAuth, async (req: AuthenticatedRequest, res) => {
 		try {
 			const { email } = req.body;
 			if (!email || typeof email !== "string") {
@@ -548,7 +570,7 @@ export default function (app: App) {
 	});
 
 	// POST /me/email/verify — 验证邮箱验证码
-	app.post("/me/email/verify", authMiddleware, async (req: AuthenticatedRequest, res) => {
+	app.post("/me/email/verify", emailVerifyAuth, async (req: AuthenticatedRequest, res) => {
 		try {
 			const { email, code } = req.body;
 			if (!email || !code) {
@@ -584,6 +606,27 @@ export default function (app: App) {
 				data: { email }
 			});
 			emailVerificationCodes.delete(req.user!.id);
+
+			// 创建正式 session 并下发登录 cookie
+			const session = await prisma.session.create({
+				data: {
+					userId: req.user!.id,
+					expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+				}
+			});
+			const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { role: true } });
+			const authToken: AuthToken = {
+				userId: req.user!.id,
+				sessionId: session.id,
+				role: (user?.role as UserRole) ?? "user",
+				iss: "openplace",
+				exp: Math.floor(session.expiresAt.getTime() / 1000),
+				iat: Math.floor(Date.now() / 1000)
+			};
+			const token = jwt.sign(authToken, JWT_SECRET!);
+			res.setHeader("Set-Cookie", [
+				`j=${token}; HttpOnly; Path=/; Max-Age=${30 * 24 * 60 * 60}; SameSite=Lax`
+			]);
 
 			return res.json({ success: true });
 		} catch (error) {
