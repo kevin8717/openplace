@@ -28,6 +28,7 @@
     "@nuxt/eslint": "^1.15.1",
     "@primevue/nuxt-module": "^4.5.4",
     "@types/node": "^25.3.0",
+    "@types/nodemailer": "^8.0.0",
     "eslint": "^9.39.2",
     "eslint-config-chariz": "^2.1.0"
   },

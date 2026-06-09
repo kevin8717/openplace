@@ -46,4 +46,4 @@ services:
     volumes:
       - .:/app
     working_dir: /app/frontend2
-    command: sh -c "CI=1 npx pnpm install && npx pnpm build && node .output/server/index.mjs"
+    command: sh -c "CI=1 npx pnpm install --omit=dev && npx pnpm build && node .output/server/index.mjs"
