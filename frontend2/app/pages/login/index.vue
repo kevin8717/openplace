@@ -149,6 +149,7 @@ const { getErrorMessage } = useErrorToast();
 interface LoginResponse {
 	success: boolean;
 	needsEmail?: boolean;
+	verifyToken?: string;
 	error?: string;
 }
 
@@ -176,6 +177,7 @@ const verificationCode = ref("");
 const emailError = ref<string | null>(null);
 const emailSubmitting = ref(false);
 const codeCooldown = ref(0);
+const verifyToken = ref("");
 let codeCooldownTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
@@ -214,6 +216,7 @@ const sendCode = async () => {
 		const config = useRuntimeConfig();
 		await $fetch(`${config.public.backendUrl}/me/email/send-code`, {
 			method: "POST",
+			headers: verifyToken.value ? { "x-verify-token": verifyToken.value } : undefined,
 			credentials: "include",
 			body: { email: newEmail.value }
 		});
@@ -250,11 +253,13 @@ const verifyCode = async () => {
 		const config = useRuntimeConfig();
 		await $fetch(`${config.public.backendUrl}/me/email/verify`, {
 			method: "POST",
+			headers: verifyToken.value ? { "x-verify-token": verifyToken.value } : undefined,
 			credentials: "include",
 			body: { email: newEmail.value, code: verificationCode.value }
 		});
 		showEmailDialog.value = false;
 		if (codeCooldownTimer) clearInterval(codeCooldownTimer);
+		// 验证成功后后端已下发 cookie，跳转
 		done();
 	} catch (error: unknown) {
 		emailError.value = getErrorMessage(error);
@@ -281,7 +286,8 @@ const submit = async (e: Event) => {
 
 		if (res.success) {
 			if (res.needsEmail) {
-				// 邮箱为空，强制验证后再跳转
+				// 保存 verifyToken，后端未下发 cookie，用 token 调用邮箱接口
+				verifyToken.value = res.verifyToken ?? "";
 				emailStep.value = "input";
 				newEmail.value = "";
 				verificationCode.value = "";

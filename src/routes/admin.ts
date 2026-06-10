@@ -1076,4 +1076,84 @@ export default function (app: App) {
 			return res.status(500).json({ error: "Internal Server Error" });
 		}
 	});
+
+	// GET /staff/dashboard/users/profile-pictures?userId=N
+	app.get("/staff/dashboard/users/profile-pictures", authMiddleware, adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+		try {
+			const userId = Number.parseInt(req.query["userId"] as string ?? "");
+			if (!Number.isInteger(userId) || userId <= 0) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Bad Request", HTTP_STATUS.BAD_REQUEST));
+			}
+			const pictures = await userService.getProfilePictures(userId);
+			return res.json(pictures);
+		} catch (error) {
+			console.error("Error fetching profile pictures:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// GET /staff/dashboard/users/appeals?userId=&kind=&page=&pageSize=&sortBy=&sortDir=
+	app.get("/staff/dashboard/users/appeals", authMiddleware, adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+		try {
+			const userId = Number.parseInt(req.query["userId"] as string ?? "");
+			if (!Number.isInteger(userId) || userId <= 0) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Bad Request", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const kind = req.query["kind"] as string ?? "sent";
+			const page = Math.max(0, Number.parseInt(req.query["page"] as string ?? "0"));
+			const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query["pageSize"] as string ?? "20")));
+			const sortBy = req.query["sortBy"] as string ?? "createdAt";
+			const sortDir = req.query["sortDir"] as string ?? "desc";
+
+			// 构建 where 条件
+			const where: any = {};
+			if (kind === "sent") {
+				where.userId = userId;
+			} else if (kind === "handled") {
+				where.handledById = userId;
+			}
+
+			// 构建 orderBy
+			const allowedSort = ["createdAt", "updatedAt", "status"];
+			const sortField = allowedSort.includes(sortBy) ? sortBy : "createdAt";
+			const orderBy = { [sortField]: sortDir === "asc" ? "asc" as const : "desc" as const };
+
+			const [appeals, total] = await Promise.all([
+				prisma.appeal.findMany({
+					where,
+					orderBy,
+					skip: page * pageSize,
+					take: pageSize,
+					include: {
+						handledBy: { select: { id: true, name: true, nickname: true } },
+						ticket: { select: { id: true, resolution: true } }
+					}
+				}),
+				prisma.appeal.count({ where })
+			]);
+
+			return res.json({
+				appeals: appeals.map(a => ({
+					id: a.id,
+					userId: a.userId,
+					message: a.message,
+					status: a.status,
+					createdAt: a.createdAt,
+					updatedAt: a.updatedAt,
+					resolution: a.resolution,
+					handledBy: a.handledBy ? { id: a.handledBy.id, name: a.handledBy.nickname || a.handledBy.name } : null,
+					ticket: a.ticket
+				})),
+				total,
+				page,
+				pageSize
+			});
+		} catch (error) {
+			console.error("Error fetching user appeals:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
 }
