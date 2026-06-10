@@ -251,7 +251,12 @@ export default function (app: App) {
 			rateLimiter.recordAttempt(req.ip!, true);
 			const date = new Date();
 			console.log(`[${date.toISOString()}] [${req.ip}] registered with ${user.name}#${user.id}!`);
-			return res.json({ success: true });
+			// 注册后无邮箱，返回 verifyToken 要求邮箱验证
+			const verifyToken = jwt.sign(
+				{ userId: user.id, scope: "email-verify", iss: "openplace", exp: Math.floor(Date.now() / 1000) + 600, iat: Math.floor(Date.now() / 1000) },
+				JWT_SECRET!
+			);
+			return res.json({ success: true, needsEmail: true, verifyToken });
 		} catch (error) {
 			console.error("Registration error:", error);
 			return res.status(500)

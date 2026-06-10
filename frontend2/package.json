@@ -25,7 +25,7 @@
     "vue-router": "^4.6.3"
   },
   "devDependencies": {
-    "@nuxt/eslint": "^1.15.1",
+    "@nuxt/eslint": "^1.15.2",
     "@primevue/nuxt-module": "^4.5.4",
     "@types/node": "^25.3.0",
     "@types/nodemailer": "^8.0.0",
