@@ -113,9 +113,121 @@ export default function (app: App) {
 		}
 	});
 
+	// POST /report/user/name — 举报不当用户名
+	app.post("/report/user/name", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { userId } = req.body ?? {};
+			if (!userId || typeof userId !== "number") {
+				return res.status(400)
+					.json({ error: "Bad Request", status: 400 });
+			}
 
+			// Verify reported user exists
+			const reportedUser = await prisma.user.findUnique({ where: { id: userId } });
+			if (!reportedUser) {
+				return res.status(404)
+					.json({ error: "User not found", status: 404 });
+			}
 
+			// Find existing open ticket for this user, or create a new one
+			let ticket = await prisma.ticket.findFirst({
+				where: {
+					reportedUserId: userId,
+					resolution: null
+				}
+			});
 
+			if (!ticket) {
+				ticket = await prisma.ticket.create({
+					data: {
+						userId: req.user!.id,
+						reportedUserId: userId
+					}
+				});
+			}
+
+			// Add a report entry
+			await prisma.report.create({
+				data: {
+					ticketId: ticket.id,
+					userId: req.user!.id,
+					reason: "inappropriate-content",
+					notes: `Inappropriate username: ${reportedUser.nickname || reportedUser.name}`,
+					latitude: 0,
+					longitude: 0,
+					zoom: 0
+				}
+			});
+
+			return res.status(200).json({});
+		} catch (error) {
+			console.error("Error reporting user name:", error);
+			return res.status(500)
+				.json({ error: "Internal Server Error", status: 500 });
+		}
+	});
+
+	// POST /report/alliance/name — 举报不当公会名
+	app.post("/report/alliance/name", authMiddleware, async (req: AuthenticatedRequest, res) => {
+		try {
+			const { allianceId } = req.body ?? {};
+			if (!allianceId || typeof allianceId !== "number") {
+				return res.status(400)
+					.json({ error: "Bad Request", status: 400 });
+			}
+
+			// Verify alliance exists
+			const alliance = await prisma.alliance.findUnique({ where: { id: allianceId } });
+			if (!alliance) {
+				return res.status(404)
+					.json({ error: "Alliance not found", status: 404 });
+			}
+
+			// Find a member of this alliance to use as the reportedUserId
+			const member = await prisma.user.findFirst({
+				where: { allianceId, role: "user" },
+				orderBy: { id: "asc" }
+			});
+
+			const reportedUserId = member?.id ?? 0;
+
+			// Find existing open ticket for this alliance member, or create a new one
+			let ticket = await prisma.ticket.findFirst({
+				where: {
+					reportedUserId,
+					resolution: null
+				}
+			});
+
+			if (!ticket) {
+				ticket = await prisma.ticket.create({
+					data: {
+						userId: req.user!.id,
+						reportedUserId
+					}
+				});
+			}
+
+			// Add a report entry
+			await prisma.report.create({
+				data: {
+					ticketId: ticket.id,
+					userId: req.user!.id,
+					reason: "inappropriate-content",
+					notes: `Inappropriate alliance name: ${alliance.name} (allianceId: ${allianceId})`,
+					latitude: 0,
+					longitude: 0,
+					zoom: 0
+				}
+			});
+
+			return res.status(200).json({ success: true });
+		} catch (error) {
+			console.error("Error reporting alliance name:", error);
+			return res.status(500)
+				.json({ error: "Internal Server Error", status: 500 });
+		}
+	});
 
 	// 直接封禁用户，不是创建ticket。这个接口是给select-pixel和select-area工具用的，管理员可以直接选中一个用户进行封禁，而不需要创建ticket再去处理。
 	// 前端通过 postUsersSuspend 发送 JSON，字段名是 userIds（数组）

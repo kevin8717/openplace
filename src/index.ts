@@ -34,6 +34,7 @@ import stufftools from "./routes/stufftools.js";
 import anticheat from "./routes/anticheat.js";
 import appeal from "./routes/appeal.js";
 import auditLog from "./routes/audit-log.js";
+import reversals from "./routes/reversals.js";
 import { leaderboardService } from "./services/leaderboard.js";
 import { discordBot } from "./discord/bot.js";
 
@@ -209,6 +210,7 @@ reportUser(app);
 anticheat(app);
 appeal(app);
 auditLog(app);
+reversals(app);
 store(app);
 
 // Proxy new frontend paths
