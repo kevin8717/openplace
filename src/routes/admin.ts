@@ -107,7 +107,7 @@ export default function (app: App) {
 					timeout_reason: user.suspensionReason ?? null,
 					reported_times: reportedTimes,
 					timeouts_count: timeoutsCount,
-					email: user.email,
+					email: user.email ?? "",
 					same_ip_accounts: sameIPAccounts,
 					alliance_id: user.allianceId,
 					alliance_name: alliance?.name,
@@ -1154,6 +1154,77 @@ export default function (app: App) {
 			});
 		} catch (error) {
 			console.error("Error fetching user appeals:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// POST /staff/dashboard/users/email — 管理员修改用户邮箱
+	app.post("/staff/dashboard/users/email", authMiddleware, adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+		try {
+			const { userId, email } = req.body ?? {};
+			if (!userId || !email || typeof email !== "string") {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json({ error: "email_required" });
+			}
+
+			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			if (!emailRegex.test(email)) {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json({ error: "invalid_email" });
+			}
+
+			const user = await prisma.user.findUnique({ where: { id: userId } });
+			if (!user) {
+				return res.status(HTTP_STATUS.NOT_FOUND)
+					.json({ error: "User not found." });
+			}
+
+			// 检查邮箱是否被其他用户占用
+			const existing = await prisma.user.findUnique({ where: { email } });
+			if (existing && existing.id !== userId) {
+				return res.status(409).json({ error: "email_already_in_use", userId: existing.id });
+			}
+
+			await prisma.user.update({
+				where: { id: userId },
+				data: { email }
+			});
+
+			return res.json({ success: true });
+		} catch (error) {
+			console.error("Error changing user email:", error);
+			return res.status(500).json({ error: "Internal Server Error" });
+		}
+	});
+
+	// POST /staff/dashboard/users/remove-picture — 管理员删除用户头像
+	app.post("/staff/dashboard/users/remove-picture", authMiddleware, adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+		try {
+			const { pictureId } = req.body ?? {};
+			if (!pictureId || typeof pictureId !== "number") {
+				return res.status(HTTP_STATUS.BAD_REQUEST)
+					.json(createErrorResponse("Bad Request", HTTP_STATUS.BAD_REQUEST));
+			}
+
+			const picture = await prisma.profilePicture.findUnique({ where: { id: pictureId } });
+			if (!picture) {
+				return res.status(HTTP_STATUS.NOT_FOUND)
+					.json(createErrorResponse("Picture not found", HTTP_STATUS.NOT_FOUND));
+			}
+
+			// 删除本地文件（如果是本地路径）
+			try {
+				const localPath = picture.url.startsWith("/") ? `.${picture.url}` : picture.url;
+				await fs.unlink(localPath);
+			} catch {
+				// 文件不存在或远程 URL 忽略
+			}
+
+			await prisma.profilePicture.delete({ where: { id: pictureId } });
+
+			return res.json({ success: true });
+		} catch (error) {
+			console.error("Error removing profile picture:", error);
 			return res.status(500).json({ error: "Internal Server Error" });
 		}
 	});

@@ -240,7 +240,7 @@ export class AllianceService {
 		}
 
 		if (user.allianceId) {
-			throw new ValidationError("Already Reported");
+			throw new Error("Already Reported");
 		}
 
 		const bannedUser = await this.prisma.bannedUser.findUnique({
@@ -575,7 +575,7 @@ export class AllianceService {
 
 				const last = await this.prisma.pixel.findFirst({
 					where: { paintedBy: m.id },
-					orderBy: [{ paintedAt: "desc" }, { id: "desc" }],
+					orderBy: { paintedAt: "desc" },
 					select: { tileX: true, tileY: true, x: true, y: true }
 				});
 				if (last) {
@@ -653,7 +653,7 @@ export class AllianceService {
 
 			const last = await this.prisma.pixel.findFirst({
 				where: { paintedBy: m.id },
-				orderBy: [{ paintedAt: "desc" }, { id: "desc" }],
+				orderBy: { paintedAt: "desc" },
 				select: { tileX: true, tileY: true, x: true, y: true }
 			});
 			if (last) {

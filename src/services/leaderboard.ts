@@ -65,48 +65,17 @@ export class LeaderboardService {
 		entries: { type: LeaderboardType; mode: LeaderboardMode; entityId: number; rank: number; pixelsPainted: number }[]
 	): Promise<void> {
 		await this.retryTransaction(async () => {
-			// First, get existing entries to avoid duplicates
-			const existingEntries = await prisma.leaderboardView.findMany({
-				where: { type, mode },
-				select: { entityId: true }
+			// Delete ALL existing entries for this type+mode, then bulk-insert fresh ones.
+			// This avoids duplicate rows caused by MySQL allowing multiple NULL values
+			// in a unique constraint (regionId is nullable in @@unique([type,mode,entityId,regionId])).
+			await prisma.leaderboardView.deleteMany({
+				where: { type, mode }
 			});
 
-			const existingEntityIds = new Set(existingEntries.map(e => e.entityId)
-				.filter(id => id !== null));
-			const newEntityIds = new Set(entries.map(e => e.entityId));
-
-			// Delete entries that are no longer in the new list
-			const toDelete = [...existingEntityIds].filter(id => !newEntityIds.has(id));
-			if (toDelete.length > 0) {
-				await prisma.leaderboardView.deleteMany({
-					where: {
-						type,
-						mode,
-						entityId: { in: toDelete }
-					}
+			if (entries.length > 0) {
+				await prisma.leaderboardView.createMany({
+					data: entries
 				});
-			}
-
-			// Use updateMany + conditional create to avoid race conditions (MySQL error 1020)
-			// updateMany doesn't read the row first, so it avoids "Record has changed since last read"
-			for (const entry of entries) {
-				const result = await prisma.leaderboardView.updateMany({
-					where: {
-						type: entry.type,
-						mode: entry.mode,
-						entityId: entry.entityId
-					},
-					data: {
-						rank: entry.rank,
-						pixelsPainted: entry.pixelsPainted
-					}
-				});
-
-				if (result.count === 0) {
-					await prisma.leaderboardView.create({
-						data: entry
-					});
-				}
 			}
 		});
 	}
