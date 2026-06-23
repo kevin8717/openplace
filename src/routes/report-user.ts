@@ -31,9 +31,23 @@ async function makeTicket(req: AuthenticatedRequest, res: Response): Promise<{ t
 		imageBase64 = req.body.imageBase64;
 	} else if (!Number.isNaN(latitude) && !Number.isNaN(longitude)) {
 		try {
-			const [tileX, tileY] = RegionService.coordinatesToTile(latitude, longitude);
-			const { buffer } = await pixelService.getTileImage(tileX, tileY, 0);
-			imageBase64 = buffer.toString("base64");
+			// 优先使用视口边界精确裁剪
+			const vpNorth = Number.parseFloat(req.body.viewportNorth);
+			const vpSouth = Number.parseFloat(req.body.viewportSouth);
+			const vpWest = Number.parseFloat(req.body.viewportWest);
+			const vpEast = Number.parseFloat(req.body.viewportEast);
+			if (!Number.isNaN(vpNorth) && !Number.isNaN(vpSouth) && !Number.isNaN(vpWest) && !Number.isNaN(vpEast)) {
+				const buffer = await RegionService.renderViewportImage(
+					{ north: vpNorth, south: vpSouth, west: vpWest, east: vpEast },
+					pixelService
+				);
+				imageBase64 = buffer.toString("base64");
+			} else {
+				// 降级：只取坐标所在的瓦片
+				const [tileX, tileY] = RegionService.coordinatesToTile(latitude, longitude);
+				const { buffer } = await pixelService.getTileImage(tileX, tileY, 0);
+				imageBase64 = buffer.toString("base64");
+			}
 		} catch (error) {
 			console.error("Error fetching tile image for report:", error);
 		}

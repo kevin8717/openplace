@@ -194,6 +194,105 @@ export class RegionService {
 		return [tileX, tileY];
 	}
 
+	/**
+	 * 将经纬度转换为全局像素坐标 + 瓦片内像素偏移
+	 */
+	static coordinatesToGlobalPixel(latitude: number, longitude: number, { tileSize, canonicalZ }: { tileSize?: number; canonicalZ?: number } = {}): { globalX: number; globalY: number; tileX: number; tileY: number; pixelX: number; pixelY: number } {
+		tileSize ??= 1000;
+		canonicalZ ??= 11;
+		const worldPixels = tileSize * Math.pow(2, canonicalZ);
+
+		const normX = (longitude + 180) / 360;
+		const normY = (1 - Math.asinh(Math.tan(latitude * Math.PI / 180)) / Math.PI) / 2;
+
+		const globalX = normX * worldPixels;
+		const globalY = normY * worldPixels;
+
+		const tileX = Math.floor(globalX / tileSize);
+		const tileY = Math.floor(globalY / tileSize);
+		const pixelX = Math.floor(globalX % tileSize);
+		const pixelY = Math.floor(globalY % tileSize);
+
+		return { globalX, globalY, tileX, tileY, pixelX, pixelY };
+	}
+
+	/**
+	 * 根据视口经纬度范围，从瓦片服务中截取对应区域的 PNG 图片
+	 * @param viewport  视口边界 { north, south, west, east }
+	 * @param pixelService  PixelService 实例（用于 getTileImage）
+	 * @param options   tileSize / canonicalZ
+	 * @returns PNG Buffer
+	 */
+	static async renderViewportImage(
+		viewport: { north: number; south: number; west: number; east: number },
+		pixelService: { getTileImage: (tileX: number, tileY: number, season?: number) => Promise<{ buffer: Buffer }> },
+		{ tileSize, canonicalZ }: { tileSize?: number; canonicalZ?: number } = {}
+	): Promise<Buffer> {
+		tileSize ??= 1000;
+		canonicalZ ??= 11;
+
+		// 将视口四角转为全局像素坐标
+		const nw = RegionService.coordinatesToGlobalPixel(viewport.north, viewport.west, { tileSize, canonicalZ });
+		const se = RegionService.coordinatesToGlobalPixel(viewport.south, viewport.east, { tileSize, canonicalZ });
+
+		// 像素范围（注意：Y 轴向下为正）
+		const pxMin = Math.floor(Math.min(nw.globalX, se.globalX));
+		const pxMax = Math.ceil(Math.max(nw.globalX, se.globalX));
+		const pyMin = Math.floor(Math.min(nw.globalY, se.globalY));
+		const pyMax = Math.ceil(Math.max(nw.globalY, se.globalY));
+
+		const outWidth = pxMax - pxMin;
+		const outHeight = pyMax - pyMin;
+		if (outWidth <= 0 || outHeight <= 0 || outWidth > 5000 || outHeight > 5000) {
+			throw new Error(`Invalid viewport dimensions: ${outWidth}x${outHeight}`);
+		}
+
+		// 确定覆盖的瓦片范围
+		const tileXMin = Math.floor(pxMin / tileSize);
+		const tileXMax = Math.floor((pxMax - 1) / tileSize);
+		const tileYMin = Math.floor(pyMin / tileSize);
+		const tileYMax = Math.floor((pyMax - 1) / tileSize);
+
+		// 创建 canvas
+		const { createCanvas } = await import("@napi-rs/canvas");
+		const canvas = createCanvas(outWidth, outHeight);
+		const ctx = canvas.getContext("2d");
+
+		// 遍历所有涉及瓦片，截取对应区域
+		for (let tx = tileXMin; tx <= tileXMax; tx++) {
+			for (let ty = tileYMin; ty <= tileYMax; ty++) {
+				const { buffer } = await pixelService.getTileImage(tx, ty, 0);
+
+				// 该瓦片在全局像素中的起始偏移
+				const tileGlobalX = tx * tileSize;
+				const tileGlobalY = ty * tileSize;
+
+				// 瓦片中被视口覆盖的矩形区域（瓦片局部坐标）
+				const srcX = Math.max(0, pxMin - tileGlobalX);
+				const srcY = Math.max(0, pyMin - tileGlobalY);
+				const srcW = Math.min(tileSize, pxMax - tileGlobalX) - srcX;
+				const srcH = Math.min(tileSize, pyMax - tileGlobalY) - srcY;
+
+				if (srcW <= 0 || srcH <= 0) continue;
+
+				// 目标 canvas 中的绘制位置
+				const dstX = tileGlobalX + srcX - pxMin;
+				const dstY = tileGlobalY + srcY - pyMin;
+
+				// 从瓦片 buffer 加载子图像并绘制
+				const tileImg = await this.loadImageFromBuffer(buffer);
+				ctx.drawImage(tileImg, srcX, srcY, srcW, srcH, dstX, dstY, srcW, srcH);
+			}
+		}
+
+		return canvas.toBuffer("image/png");
+	}
+
+	private static async loadImageFromBuffer(buffer: Buffer): Promise<any> {
+		const { loadImage } = await import("@napi-rs/canvas");
+		return loadImage(buffer);
+	}
+
 	async getRegionForCoordinates(tile: [number, number], pixel: [number, number]): Promise<Region> {
 		const { latitude, longitude } = RegionService.pixelsToCoordinates(tile, pixel);
 
