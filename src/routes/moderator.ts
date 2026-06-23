@@ -5,6 +5,7 @@ import { AuthenticatedRequest, BanReason, TicketResolution, UserRole } from "../
 import fs from "fs/promises";
 import { validatePixelInfo } from "../validators/pixel.js";
 import { createErrorResponse, HTTP_STATUS } from "../utils/response.js";
+import { detectImageMime } from "../utils/image.js";
 import { PixelService } from "../services/pixel.js";
 import { TicketService } from "../services/ticket.js";
 import { UserService } from "../services/user.js";
@@ -242,7 +243,7 @@ export default function (app: App) {
 						reason: r.reason,
 						notes: r.notes,
 						imageUrl: r.image
-							? `data:image/jpeg;base64,${Buffer.from(r.image)
+							? `data:${detectImageMime(r.image)};base64,${Buffer.from(r.image)
 								.toString("base64")}`
 							: "",
 						createdAt: r.createdAt,
@@ -693,7 +694,7 @@ export default function (app: App) {
 						reportedLongitude: String(r.longitude),
 						zoom: r.zoom,
 						imageUrl: r.image
-							? `data:image/jpeg;base64,${Buffer.from(r.image).toString("base64")}`
+							? `data:${detectImageMime(r.image)};base64,${Buffer.from(r.image).toString("base64")}`
 							: "",
 						notes: r.notes,
 						reportedCount,
@@ -951,7 +952,7 @@ export default function (app: App) {
 						reportedLongitude: String(r.longitude),
 						zoom: r.zoom,
 						imageUrl: r.image
-							? `data:image/jpeg;base64,${Buffer.from(r.image).toString("base64")}`
+							? `data:${detectImageMime(r.image)};base64,${Buffer.from(r.image).toString("base64")}`
 							: "",
 						notes: r.notes
 					}))
