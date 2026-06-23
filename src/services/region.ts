@@ -170,6 +170,30 @@ export class RegionService {
 		return { latitude, longitude };
 	}
 
+	/**
+	 * 将经纬度转换为瓦片坐标（pixelsToCoordinates 的逆运算）
+	 * @param latitude  纬度（度）
+	 * @param longitude 经度（度）
+	 * @param options   tileSize 瓦片像素大小（默认 1000），canonicalZ 基准缩放级别（默认 11）
+	 * @returns [tileX, tileY] 瓦片坐标
+	 */
+	static coordinatesToTile(latitude: number, longitude: number, { tileSize, canonicalZ }: { tileSize?: number; canonicalZ?: number } = {}): [number, number] {
+		tileSize ??= 1000;
+		canonicalZ ??= 11;
+		const worldPixels = tileSize * Math.pow(2, canonicalZ);
+
+		const normX = (longitude + 180) / 360;
+		const normY = (1 - Math.asinh(Math.tan(latitude * Math.PI / 180)) / Math.PI) / 2;
+
+		const globalX = normX * worldPixels;
+		const globalY = normY * worldPixels;
+
+		const tileX = Math.floor(globalX / tileSize);
+		const tileY = Math.floor(globalY / tileSize);
+
+		return [tileX, tileY];
+	}
+
 	async getRegionForCoordinates(tile: [number, number], pixel: [number, number]): Promise<Region> {
 		const { latitude, longitude } = RegionService.pixelsToCoordinates(tile, pixel);
 

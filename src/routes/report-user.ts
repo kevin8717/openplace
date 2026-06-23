@@ -6,11 +6,14 @@ import { AuditService, AuditAction } from "../services/audit.js";
 import { AuthenticatedRequest, BanReason, TicketResolution } from "../types/index.js";
 import { authMiddleware } from "../middleware/auth.js";
 import { adminMiddleware } from "./admin.js";
+import { PixelService } from "../services/pixel.js";
+import { RegionService } from "../services/region.js";
 import multer from "multer";
 
 const ticketService = new TicketService(prisma);
 const userService = new UserService(prisma);
 const auditService = new AuditService(prisma);
+const pixelService = new PixelService(prisma);
 
 async function makeTicket(req: AuthenticatedRequest, res: Response): Promise<{ ticketId: string } | undefined> {
 	const reportedUserId = Number.parseInt(req.body.reportedUserId ?? -1);
@@ -20,12 +23,20 @@ async function makeTicket(req: AuthenticatedRequest, res: Response): Promise<{ t
 	const reason = req.body.reason;
 	const notes = req.body.notes;
 
-	// Convert multer file buffer to base64 string
+	// 如果前端没有上传图片，自动从本地瓦片服务截取坐标位置的截图
 	let imageBase64: string | undefined;
 	if (req.file?.buffer) {
 		imageBase64 = req.file.buffer.toString("base64");
-	} else {
+	} else if (req.body.imageBase64) {
 		imageBase64 = req.body.imageBase64;
+	} else if (!Number.isNaN(latitude) && !Number.isNaN(longitude)) {
+		try {
+			const [tileX, tileY] = RegionService.coordinatesToTile(latitude, longitude);
+			const { buffer } = await pixelService.getTileImage(tileX, tileY, 0);
+			imageBase64 = buffer.toString("base64");
+		} catch (error) {
+			console.error("Error fetching tile image for report:", error);
+		}
 	}
 
 	if (!reportedUserId || !latitude || !longitude || !zoom || !reason) {
