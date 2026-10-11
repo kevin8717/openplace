@@ -1,0 +1,80 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    ".opencode/instruction/default.md"
+  ],
+  "agent": {
+    "frontend-analysis": {
+      "description": "Use when analyzing reverse-engineered wplace frontend JS files (frontend/_app/immutable/) to determine API requirements, field mappings, and route structure. Also use when implementing backend routes that must match the original wplace frontend expectations.",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-5",
+      "permission": { "read": "allow", "edit": "deny" },
+      "prompt": "## Architecture\nThis project reverse-engineers wplace.live. The original frontend JS is in frontend/_app/immutable/ (SvelteKit build). Backend API (src/) must match what the original frontend expects. Analyze minified JS (chunks/Crl10T8F.js) for API structure.\n\n## How to Add Pages to frontend2/\n1. Create .vue in frontend2/app/pages/ (Nuxt auto-registers route)\n2. Admin pages: use definePageMeta({ layout: 'admin' })\n3. Register PrimeVue components in nuxt.config.ts primevue.components.include\n4. In src/index.ts, add app.get('/path', frontendProxy) to proxy to frontend2\n5. Docker: set FRONTEND_HOST=frontend2, FRONTEND_PORT=3000 in .env\n\n## Reverse Engineering Methodology\n- Search chunk files for async method names or URL paths to find API calls\n- API class is defined in Crl10T8F.js as class u with all request methods\n- Default values (e.g. ticket.status ?? 'open') reveal optional fields\n- Nested access (e.g. ticket.reportedUser.id) reveals required relation includes\n- String() calls hint at type mismatches\n\n## Core Concept: Ticket vs Report\nTicket = one CASE against one user (has resolution: null/ban/timeout/ignore). Report = individual SUBMISSION (reason, screenshot, coords). One Ticket can have many Reports.\n\n## Critical Field Gotchas\n- assignedUser in ticket: frontend expects {id,name,picture} object (NOT null, NOT flat fields)\n- handledBy -> MUST be renamed to assignedUser in response\n- reportedUser in ticket must include role, allianceId, allianceName (cross-table query Alliance)\n- Ticket status: simulate with resolution ?? 'open'\n- Report image: store as base64 in DB, return as data:image/jpeg;base64,...\n- /me: discordUserId -> discordId; allianceId null -> 0; add freeFlag,hotspotsOptOut,showDiscord,rulesRead; remove charges.boost/permissions/banned/verified/suspensionReason/needsPhoneVerification/owned*\n- equippedBadges: convert from JSON [1,2,3] to [{id,imageUrl,name,rarity},...] per slot\n- Notification: frontend IGNORES title/message fields - uses hardcoded translations by type\n- Appeals: /staff/appeals/get returns items with 'notes' field (NOT 'message') for the content\n- Alliance search: MUST register route BEFORE /:id to avoid route conflict\n- /staff/dashboard/users/info: returns timeout_until, banned, reported_times, timeout_count, same_ip_accounts, last_pixel_latitude/longitude (from User table, not Pixel)\n\n## Technical Notes\n- Coordinate conversion: use src/utils/coordinate.ts tilePixelToLatLon(tileX,tileY,pixelX,pixelY) (tileSize=1000, zoom=11). Do NOT hardcode tileSize=256.\n- Last pixel location: stored on User table (lastPixelLatitude,lastPixelLongitude,lastPixelPaintedAt). Written in paintPixels transaction. No more Pixel table scan.\n- Race condition (Error 1020): use $transaction + SELECT...FOR UPDATE for User reads; all User writes in paintPixels in ONE transaction\n- Null dates (Tile.updatedAt): use NULLIF(updatedAt,'0000-00-00 00:00:00') in raw SQL, fallback row.updatedAt ?? new Date()\n- Ban vs Timeout: frontend checks timeout_until >= now+1yr for ban; set timeoutUntil to 10 years for bans\n- Payment: POST /payment/create-checkout-session uses JSON body (NOT form-urlencoded), returns 200 JSON {clientSecret,sessionId} (NOT redirect)\n\n## Detailed Reference\nFor complete API route mappings, field details, store system, and permissions, see .opencode/memory/"
+    }
+  },
+  "command": {
+    "dev": {
+      "description": "Start backend dev server (tsx watch src, port 3001)",
+      "template": "pnpm dev"
+    },
+    "dev:frontend": {
+      "description": "Start Nuxt 3 frontend dev server (port 3000)",
+      "template": "cd frontend2 && pnpm dev"
+    },
+    "build": {
+      "description": "Compile backend TypeScript (tsc)",
+      "template": "pnpm build"
+    },
+    "build:frontend": {
+      "description": "Build Nuxt 3 frontend for production",
+      "template": "cd frontend2 && pnpm build"
+    },
+    "lint": {
+      "description": "Type-check and lint backend source code",
+      "template": "pnpm lint"
+    },
+    "lint:frontend": {
+      "description": "Lint frontend2 code",
+      "template": "cd frontend2 && pnpm lint"
+    },
+    "test": {
+      "description": "Run backend tests with Vitest",
+      "template": "pnpm test"
+    },
+    "db:generate": {
+      "description": "Regenerate Prisma client after schema changes",
+      "template": "pnpm db:generate"
+    },
+    "db:push": {
+      "description": "Push Prisma schema to database",
+      "template": "pnpm db:push"
+    },
+    "db:deploy": {
+      "description": "Apply pending Prisma migrations",
+      "template": "pnpm db:deploy"
+    },
+    "db:studio": {
+      "description": "Open Prisma Studio to browse database",
+      "template": "pnpm db:studio"
+    },
+    "setup": {
+      "description": "Run project setup script (scripts/setup.ts)",
+      "template": "pnpm setup"
+    },
+    "docker:up": {
+      "description": "Start all services with Docker Compose",
+      "template": "docker compose up -d"
+    },
+    "docker:down": {
+      "description": "Stop all Docker Compose services",
+      "template": "docker compose down"
+    }
+  },
+  "permission": {
+    "read": "allow",
+    "edit": "allow",
+    "bash": "allow",
+    "glob": "allow",
+    "grep": "allow"
+  }
+}
