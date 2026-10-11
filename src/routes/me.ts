@@ -651,7 +651,7 @@ export default function (app: App) {
 		}
 	});
 
-	// GET /me/suspension — 获取用户封禁/暂停详情
+	// GET /me/suspension — 获取用户封禁/暂停详情（含多次处罚历史）
 	app.get("/me/suspension", authMiddleware, async (req: AuthenticatedRequest, res) => {
 		try {
 			const user = await prisma.user.findUnique({
@@ -666,16 +666,35 @@ export default function (app: App) {
 			const now = new Date();
 			const isTimedOut = user.timeoutUntil > now;
 
-			if (!user.banned && !isTimedOut) {
-				return res.json({ active: false });
-			}
-
-			return res.json({
-				active: true,
-				kind: user.banned ? "ban" : "timeout",
-				reason: user.suspensionReason ?? "",
-				timeoutUntil: isTimedOut ? user.timeoutUntil.toISOString() : null
+			// 查询该用户所有被处罚的工单（ban/timeout），按时间倒序
+			const punishmentTickets = await prisma.ticket.findMany({
+				where: {
+					reportedUserId: req.user!.id,
+					resolution: { in: ["ban", "timeout"] }
+				},
+				orderBy: { createdAt: "desc" },
+				include: {
+					reports: {
+						orderBy: { createdAt: "asc" },
+						take: 1
+					},
+					_count: {
+						select: { appeals: true }
+					}
+				}
 			});
+
+			// 构造 punishments 数组
+			const punishments = punishmentTickets.map((ticket) => ({
+				appealSubmitted: ticket._count.appeals > 0,
+				kind: ticket.resolution as "ban" | "timeout",
+				reason: (ticket.reports[0]?.reason ?? user.suspensionReason ?? "other") as string,
+				...(ticket.id ? { ticketId: ticket.id } : {})
+			}));
+
+			const active = user.banned || isTimedOut;
+
+			return res.json({ active, punishments });
 		} catch (error) {
 			return handleServiceError(error as Error, res);
 		}
